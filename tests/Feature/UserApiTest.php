@@ -64,4 +64,43 @@ class UserApiTest extends TestCase
             'device_id' => 'MORPHO_02',
         ]);
     }
+
+    public function test_user_can_be_created_with_profile_image_link(): void
+    {
+        $response = $this->postJson('/api/users', [
+            'employee_id' => 'EMP001',
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+            'profile_image' => 'https://example.com/profile.jpg',
+        ]);
+
+        $response
+            ->assertCreated()
+            ->assertJsonPath('status', true)
+            ->assertJsonPath('data.employee_id', 'EMP001')
+            ->assertJsonPath('data.profile_image', 'https://example.com/profile.jpg');
+
+        $this->assertDatabaseHas('users', [
+            'employee_id' => 'EMP001',
+            'profile_image' => 'https://example.com/profile.jpg',
+        ]);
+    }
+
+    public function test_user_profile_image_link_can_be_updated(): void
+    {
+        $user = UserModel::factory()->create([
+            'profile_image' => 'https://example.com/old-profile.jpg',
+        ]);
+
+        $this->putJson("/api/users/{$user->id}", [
+            'profile_image' => 'https://example.com/new-profile.png',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.profile_image', 'https://example.com/new-profile.png');
+
+        $this->assertDatabaseHas('users', [
+            'id' => $user->id,
+            'profile_image' => 'https://example.com/new-profile.png',
+        ]);
+    }
 }

@@ -24,6 +24,7 @@ class UserController extends Controller
             'last_name' => ['nullable', 'string', 'max:255'],
             'phone_no' => ['nullable', 'string', 'max:255'],
             'device_id' => ['nullable', 'string', 'max:255'],
+            'profile_image' => ['nullable', 'url', 'max:2048'],
         ]);
 
         $user = UserModel::create($this->userData($validated));
@@ -51,6 +52,7 @@ class UserController extends Controller
             'last_name' => ['sometimes', 'nullable', 'string', 'max:255'],
             'phone_no' => ['sometimes', 'nullable', 'string', 'max:255'],
             'device_id' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'profile_image' => ['sometimes', 'nullable', 'url', 'max:2048'],
         ]);
 
         $user->update($this->userData($validated, $user));

@@ -26,6 +26,7 @@ class UserFactory extends Factory
             'last_name' => fake()->lastName(),
             'phone_no' => fake()->optional()->phoneNumber(),
             'device_id' => fake()->optional()->bothify('DEVICE_##'),
+            'profile_image' => null,
             'name' => fake()->name(),
             'remember_token' => Str::random(10),
         ];

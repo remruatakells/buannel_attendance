@@ -11,7 +11,7 @@ class UserModel extends Model
 {
     use HasFactory;
 
-    protected $table = 'users';  
+    protected $table = 'users';
 
     protected static function newFactory(): UserFactory
     {
@@ -24,6 +24,7 @@ class UserModel extends Model
         'last_name',
         'phone_no',
         'device_id',
+        'profile_image',
         'name',
     ];
 
