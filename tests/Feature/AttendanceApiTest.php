@@ -151,6 +151,130 @@ class AttendanceApiTest extends TestCase
             ->assertJsonPath('data.user.first_name', 'John');
     }
 
+    public function test_check_in_is_rejected_before_allowed_window(): void
+    {
+        Carbon::setTestNow('2026-04-29 08:59:59 AM');
+
+        UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+        ]);
+
+        $this->postJson('/api/attendance', [
+            'user_id' => 'EMP001',
+        ])
+            ->assertConflict()
+            ->assertJsonPath('status', false)
+            ->assertJsonPath('action', 'check_in_closed');
+
+        $this->assertDatabaseMissing('attendances', [
+            'attendance_date' => '2026-04-29',
+        ]);
+    }
+
+    public function test_check_in_is_rejected_after_allowed_window(): void
+    {
+        Carbon::setTestNow('2026-04-29 10:00:01 AM');
+
+        UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+        ]);
+
+        $this->postJson('/api/attendance', [
+            'user_id' => 'EMP001',
+        ])
+            ->assertConflict()
+            ->assertJsonPath('status', false)
+            ->assertJsonPath('action', 'check_in_closed');
+
+        $this->assertDatabaseMissing('attendances', [
+            'attendance_date' => '2026-04-29',
+        ]);
+    }
+
+    public function test_check_in_accepts_end_of_allowed_window(): void
+    {
+        Carbon::setTestNow('2026-04-29 10:00:00 AM');
+
+        $user = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+        ]);
+
+        $this->postJson('/api/attendance', [
+            'user_id' => 'EMP001',
+        ])
+            ->assertOk()
+            ->assertJsonPath('action', 'check_in')
+            ->assertJsonPath('data.check_in', '10:00:00 AM');
+
+        $this->assertDatabaseHas('attendances', [
+            'user_id' => $user->id,
+            'attendance_date' => '2026-04-29',
+            'check_in' => '10:00:00',
+        ]);
+    }
+
+    public function test_check_out_is_rejected_before_allowed_window(): void
+    {
+        Carbon::setTestNow('2026-04-29 09:15:00 AM');
+
+        $user = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+        ]);
+
+        Attendance::create([
+            'user_id' => $user->id,
+            'attendance_date' => '2026-04-29',
+            'check_in' => '09:15:00 AM',
+            'status' => 'present',
+        ]);
+
+        Carbon::setTestNow('2026-04-29 03:59:59 PM');
+
+        $this->postJson('/api/attendance', [
+            'user_id' => 'EMP001',
+        ])
+            ->assertConflict()
+            ->assertJsonPath('status', false)
+            ->assertJsonPath('action', 'check_out_closed');
+
+        $this->assertDatabaseHas('attendances', [
+            'user_id' => $user->id,
+            'attendance_date' => '2026-04-29',
+            'check_out' => null,
+        ]);
+    }
+
+    public function test_check_out_accepts_start_of_allowed_window(): void
+    {
+        Carbon::setTestNow('2026-04-29 09:15:00 AM');
+
+        $user = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+        ]);
+
+        Attendance::create([
+            'user_id' => $user->id,
+            'attendance_date' => '2026-04-29',
+            'check_in' => '09:15:00 AM',
+            'status' => 'present',
+        ]);
+
+        Carbon::setTestNow('2026-04-29 04:00:00 PM');
+
+        $this->postJson('/api/attendance', [
+            'user_id' => 'EMP001',
+        ])
+            ->assertOk()
+            ->assertJsonPath('action', 'check_out')
+            ->assertJsonPath('data.check_out', '04:00:00 PM');
+
+        $this->assertDatabaseHas('attendances', [
+            'user_id' => $user->id,
+            'attendance_date' => '2026-04-29',
+            'check_out' => '16:00:00',
+        ]);
+    }
+
     public function test_single_attendance_api_checks_out_existing_open_attendance(): void
     {
         Carbon::setTestNow('2026-04-29 09:15:00 AM');

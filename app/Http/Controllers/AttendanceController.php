@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\Models\Attendance;
 use App\Models\UserModel;
 use Carbon\Carbon;
@@ -18,10 +17,11 @@ class AttendanceController extends Controller
         ]);
 
         $today = Carbon::today()->toDateString();
-        $now = Carbon::now()->format('H:i:s');
+        $now = Carbon::now();
+        $time = $now->format('H:i:s');
         $user = UserModel::where('employee_id', $validated['user_id'])->first();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json([
                 'status' => false,
                 'message' => 'User not found',
@@ -41,11 +41,19 @@ class AttendanceController extends Controller
             ], 409);
         }
 
-        if (!$attendance) {
+        if (! $attendance) {
+            if (! $now->betweenIncluded($now->copy()->setTime(9, 0), $now->copy()->setTime(10, 0))) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Check-in is allowed only between 09:00 AM and 10:00 AM',
+                    'action' => 'check_in_closed',
+                ], 409);
+            }
+
             $attendance = Attendance::create([
                 'user_id' => $user->id,
                 'attendance_date' => $today,
-                'check_in' => $now,
+                'check_in' => $time,
                 'status' => 'present',
             ])->load('user');
 
@@ -57,8 +65,17 @@ class AttendanceController extends Controller
             ]);
         }
 
+        if ($now->lt($now->copy()->setTime(16, 0))) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Check-out is allowed from 04:00 PM',
+                'action' => 'check_out_closed',
+                'data' => $attendance->load('user'),
+            ], 409);
+        }
+
         $attendance->update([
-            'check_out' => $now,
+            'check_out' => $time,
         ]);
         $attendance->load('user');
 
@@ -91,7 +108,7 @@ class AttendanceController extends Controller
 
         $user = UserModel::where('employee_id', $userId)->first();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json([
                 'status' => false,
                 'message' => 'User not found',
@@ -123,7 +140,7 @@ class AttendanceController extends Controller
     {
         $attendance = Attendance::with('user')->find($id);
 
-        if (!$attendance) {
+        if (! $attendance) {
             return response()->json([
                 'status' => false,
                 'message' => 'Attendance not found',
@@ -150,7 +167,7 @@ class AttendanceController extends Controller
     {
         $attendance = Attendance::find($id);
 
-        if (!$attendance) {
+        if (! $attendance) {
             return response()->json([
                 'status' => false,
                 'message' => 'Attendance not found',
