@@ -13,6 +13,7 @@ Route::delete('/users/{user}', [UserController::class, 'destroy']);
 Route::prefix('attendance')->group(function () {
     Route::post('/', [AttendanceController::class, 'mark']);
 
+    Route::get('/admin', [AttendanceController::class, 'adminAttendance']);
     Route::get('/today', [AttendanceController::class, 'today']);
     Route::get('/user/{userId}', [AttendanceController::class, 'userAttendance']);
 

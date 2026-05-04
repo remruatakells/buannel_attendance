@@ -343,6 +343,61 @@ class AttendanceApiTest extends TestCase
             ->assertJsonPath('data.0.check_in', '09:00:00 AM');
     }
 
+    public function test_admin_attendance_can_be_filtered_by_month(): void
+    {
+        $john = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+        ]);
+        $jane = UserModel::factory()->create([
+            'employee_id' => 'EMP002',
+            'first_name' => 'Jane',
+            'last_name' => 'Smith',
+        ]);
+
+        Attendance::create([
+            'user_id' => $john->id,
+            'attendance_date' => '2026-04-10',
+            'check_in' => '09:00:00',
+            'check_out' => '17:30:00',
+            'status' => 'present',
+        ]);
+
+        Attendance::create([
+            'user_id' => $jane->id,
+            'attendance_date' => '2026-04-11',
+            'check_in' => '09:30:00',
+            'check_out' => '17:30:00',
+            'status' => 'present',
+        ]);
+
+        Attendance::create([
+            'user_id' => $john->id,
+            'attendance_date' => '2026-05-10',
+            'check_in' => '09:00:00',
+            'check_out' => '17:30:00',
+            'status' => 'present',
+        ]);
+
+        $this->getJson('/api/attendance/admin?month=2026-04')
+            ->assertOk()
+            ->assertJsonPath('status', true)
+            ->assertJsonPath('month', '2026-04')
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.attendance_date', '2026-04-11')
+            ->assertJsonPath('data.0.user.employee_id', 'EMP002')
+            ->assertJsonPath('data.1.attendance_date', '2026-04-10')
+            ->assertJsonPath('data.1.user.employee_id', 'EMP001');
+    }
+
+    public function test_admin_attendance_rejects_invalid_month_filter(): void
+    {
+        $this->getJson('/api/attendance/admin?month=04-2026')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('month');
+    }
+
     public function test_user_attendance_rejects_invalid_month_filter(): void
     {
         UserModel::factory()->create([

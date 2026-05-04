@@ -100,6 +100,35 @@ class AttendanceController extends Controller
         ]);
     }
 
+    public function adminAttendance(Request $request)
+    {
+        $validated = $request->validate([
+            'month' => ['sometimes', 'date_format:Y-m'],
+        ]);
+
+        $query = Attendance::with('user');
+
+        if (isset($validated['month'])) {
+            $month = Carbon::createFromFormat('Y-m', $validated['month']);
+
+            $query->whereBetween('attendance_date', [
+                $month->copy()->startOfMonth()->toDateString(),
+                $month->copy()->endOfMonth()->toDateString(),
+            ]);
+        }
+
+        $data = $query
+            ->orderByDesc('attendance_date')
+            ->orderByDesc('id')
+            ->get();
+
+        return response()->json([
+            'status' => true,
+            'month' => $validated['month'] ?? null,
+            'data' => $data,
+        ]);
+    }
+
     public function userAttendance(Request $request, $userId)
     {
         $validated = $request->validate([
