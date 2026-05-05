@@ -201,7 +201,7 @@ class UserApiTest extends TestCase
             'is_admin' => true,
         ]);
 
-        $this->postJson('/api/login', [
+        $this->postJson('/api/attendance/login', [
             'phone_no' => '9999999999',
             'password' => 'secret123',
         ])
@@ -220,7 +220,7 @@ class UserApiTest extends TestCase
             'is_admin' => true,
         ]);
 
-        $this->postJson('/api/login', [
+        $this->postJson('/api/attendance/login', [
             'phone_no' => '9999999999',
             'password' => 'wrong-password',
         ])
@@ -236,11 +236,12 @@ class UserApiTest extends TestCase
             'is_admin' => false,
         ]);
 
-        $this->postJson('/api/login', [
+        $this->postJson('/api/attendance/login', [
             'phone_no' => '9999999999',
             'password' => 'secret123',
         ])
-            ->assertUnauthorized()
-            ->assertJsonPath('status', false);
+            ->assertForbidden()
+            ->assertJsonPath('status', false)
+            ->assertJsonPath('message', 'User is not admin');
     }
 }

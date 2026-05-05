@@ -13,7 +13,7 @@ class UserController extends Controller
     {
         $viewer = $this->viewerFromRequest($request);
 
-        if ($this->viewerWasRequested($request) && ! $viewer) {
+        if ($this->viewerWasRequested($request) && !$viewer) {
             return $this->viewerNotFoundResponse();
         }
 
@@ -30,7 +30,7 @@ class UserController extends Controller
     {
         $viewer = $this->viewerFromRequest($request);
 
-        if ($this->viewerWasRequested($request) && ! $viewer) {
+        if ($this->viewerWasRequested($request) && !$viewer) {
             return $this->viewerNotFoundResponse();
         }
 
@@ -61,7 +61,7 @@ class UserController extends Controller
 
     public function show(Request $request, UserModel $user)
     {
-        if (! $this->viewerCanAccessUser($request, $user)) {
+        if (!$this->viewerCanAccessUser($request, $user)) {
             return $this->userNotFoundResponse();
         }
 
@@ -73,7 +73,7 @@ class UserController extends Controller
 
     public function update(Request $request, UserModel $user)
     {
-        if (! $this->viewerCanAccessUser($request, $user)) {
+        if (!$this->viewerCanAccessUser($request, $user)) {
             return $this->userNotFoundResponse();
         }
 
@@ -107,7 +107,7 @@ class UserController extends Controller
 
     public function destroy(Request $request, UserModel $user)
     {
-        if (! $this->viewerCanAccessUser($request, $user)) {
+        if (!$this->viewerCanAccessUser($request, $user)) {
             return $this->userNotFoundResponse();
         }
 
@@ -126,15 +126,19 @@ class UserController extends Controller
             'password' => ['required', 'string', 'max:255'],
         ]);
 
-        $user = UserModel::where('phone_no', $validated['phone_no'])
-            ->where('is_admin', true)
-            ->first();
-
-        if (! $user || ! $user->password || ! Hash::check($validated['password'], $user->password)) {
+        $user = UserModel::where('phone_no', $validated['phone_no'])->first();
+        if (!$user || !$user->password || !Hash::check($validated['password'], $user->password)) {
             return response()->json([
                 'status' => false,
-                'message' => 'Invalid phone number or password',
+                'message' => 'The provided phone number or password is incorrect. Please verify your credentials and try again.',
             ], 401);
+        }
+
+        if (!$user->is_admin) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Access denied. You do not have the required administrative privileges to perform this action.',
+            ], 403);
         }
 
         return response()->json([
@@ -177,7 +181,7 @@ class UserController extends Controller
         }
 
         if ($firstName) {
-            $payload['name'] = trim($firstName.' '.($lastName ?? ''));
+            $payload['name'] = trim($firstName . ' ' . ($lastName ?? ''));
         }
 
         return $payload;
@@ -187,11 +191,11 @@ class UserController extends Controller
     {
         $viewer = $this->viewerFromRequest($request);
 
-        if ($this->viewerWasRequested($request) && ! $viewer) {
+        if ($this->viewerWasRequested($request) && !$viewer) {
             return false;
         }
 
-        if (! $viewer) {
+        if (!$viewer) {
             return true;
         }
 
@@ -202,7 +206,7 @@ class UserController extends Controller
     {
         $employeeId = $this->viewerIdentifier($request);
 
-        if (! $employeeId) {
+        if (!$employeeId) {
             return null;
         }
 
