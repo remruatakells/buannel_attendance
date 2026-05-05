@@ -126,7 +126,10 @@ class UserController extends Controller
             'password' => ['required', 'string', 'max:255'],
         ]);
 
-        $user = UserModel::where('phone_no', $validated['phone_no'])->first();
+        $user = UserModel::with('organization')
+            ->where('phone_no', $validated['phone_no'])
+            ->first();
+            
         if (!$user || !$user->password || !Hash::check($validated['password'], $user->password)) {
             return response()->json([
                 'status' => false,
