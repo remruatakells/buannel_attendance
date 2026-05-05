@@ -63,9 +63,4 @@ class UserModel extends Model
 
         return $query->where('organization_id', $viewer->organization_id);
     }
-
-    public function organization()
-    {
-        return $this->belongsTo(Organization::class, 'organization_id');
-    }
 }
