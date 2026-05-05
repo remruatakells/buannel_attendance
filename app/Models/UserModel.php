@@ -25,11 +25,25 @@ class UserModel extends Model
         'first_name',
         'last_name',
         'phone_no',
+        'password',
+        'is_admin',
         'device_id',
         'profile_image',
         'organization_id',
         'name',
     ];
+
+    protected $hidden = [
+        'password',
+        'remember_token',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'is_admin' => 'boolean',
+        ];
+    }
 
     public function organization(): BelongsTo
     {

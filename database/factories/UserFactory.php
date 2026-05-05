@@ -5,6 +5,7 @@ namespace Database\Factories;
 use App\Models\Organization;
 use App\Models\UserModel;
 use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
 /**
@@ -26,6 +27,8 @@ class UserFactory extends Factory
             'first_name' => fake()->firstName(),
             'last_name' => fake()->lastName(),
             'phone_no' => fake()->optional()->phoneNumber(),
+            'password' => Hash::make('password'),
+            'is_admin' => false,
             'device_id' => fake()->optional()->bothify('DEVICE_##'),
             'profile_image' => null,
             'organization_id' => Organization::factory(),

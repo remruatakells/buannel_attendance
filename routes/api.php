@@ -27,4 +27,6 @@ Route::prefix('attendance')->group(function () {
     Route::put('/organizations/{organization}', [OrganizationController::class, 'update']);
     Route::patch('/organizations/{organization}', [OrganizationController::class, 'update']);
     Route::delete('/organizations/{organization}', [OrganizationController::class, 'destroy']);
+
+    Route::post('/login', [UserController::class, 'login']);
 });

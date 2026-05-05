@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Organization;
 use App\Models\UserModel;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 class UserApiTest extends TestCase
@@ -190,5 +191,56 @@ class UserApiTest extends TestCase
         ])
             ->assertForbidden()
             ->assertJsonPath('message', 'Organization not allowed');
+    }
+
+    public function test_admin_user_can_login_with_phone_number_and_password(): void
+    {
+        $user = UserModel::factory()->create([
+            'phone_no' => '9999999999',
+            'password' => Hash::make('secret123'),
+            'is_admin' => true,
+        ]);
+
+        $this->postJson('/api/login', [
+            'phone_no' => '9999999999',
+            'password' => 'secret123',
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', true)
+            ->assertJsonPath('data.id', $user->id)
+            ->assertJsonPath('data.isAdmin', true)
+            ->assertJsonMissingPath('data.password');
+    }
+
+    public function test_login_rejects_wrong_password(): void
+    {
+        UserModel::factory()->create([
+            'phone_no' => '9999999999',
+            'password' => Hash::make('secret123'),
+            'is_admin' => true,
+        ]);
+
+        $this->postJson('/api/login', [
+            'phone_no' => '9999999999',
+            'password' => 'wrong-password',
+        ])
+            ->assertUnauthorized()
+            ->assertJsonPath('status', false);
+    }
+
+    public function test_login_rejects_non_admin_user(): void
+    {
+        UserModel::factory()->create([
+            'phone_no' => '9999999999',
+            'password' => Hash::make('secret123'),
+            'is_admin' => false,
+        ]);
+
+        $this->postJson('/api/login', [
+            'phone_no' => '9999999999',
+            'password' => 'secret123',
+        ])
+            ->assertUnauthorized()
+            ->assertJsonPath('status', false);
     }
 }

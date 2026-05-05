@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\UserModel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 
 class UserController extends Controller
@@ -38,6 +39,8 @@ class UserController extends Controller
             'first_name' => ['required', 'string', 'max:255'],
             'last_name' => ['nullable', 'string', 'max:255'],
             'phone_no' => ['nullable', 'string', 'max:255'],
+            'password' => ['nullable', 'string', 'min:6', 'max:255'],
+            'isAdmin' => ['nullable', 'boolean'],
             'device_id' => ['nullable', 'string', 'max:255'],
             'profile_image' => ['nullable', 'url', 'max:2048'],
             'organization_id' => ['required', 'integer', 'exists:organizations,id'],
@@ -79,6 +82,8 @@ class UserController extends Controller
             'first_name' => ['sometimes', 'string', 'max:255'],
             'last_name' => ['sometimes', 'nullable', 'string', 'max:255'],
             'phone_no' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'password' => ['sometimes', 'nullable', 'string', 'min:6', 'max:255'],
+            'isAdmin' => ['sometimes', 'boolean'],
             'device_id' => ['sometimes', 'nullable', 'string', 'max:255'],
             'profile_image' => ['sometimes', 'nullable', 'url', 'max:2048'],
             'organization_id' => ['sometimes', 'integer', 'exists:organizations,id'],
@@ -114,6 +119,39 @@ class UserController extends Controller
         ]);
     }
 
+    public function login(Request $request)
+    {
+        $validated = $request->validate([
+            'phone_no' => ['required', 'string', 'max:255'],
+            'password' => ['required', 'string', 'max:255'],
+        ]);
+
+        $user = UserModel::where('phone_no', $validated['phone_no'])
+            ->where('is_admin', true)
+            ->first();
+
+        if (! $user || ! $user->password || ! Hash::check($validated['password'], $user->password)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Invalid phone number or password',
+            ], 401);
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Login successful',
+            'data' => [
+                'id' => $user->id,
+                'employee_id' => $user->employee_id,
+                'first_name' => $user->first_name,
+                'last_name' => $user->last_name,
+                'phone_no' => $user->phone_no,
+                'isAdmin' => $user->is_admin,
+                'organization_id' => $user->organization_id,
+            ],
+        ]);
+    }
+
     /**
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
@@ -124,6 +162,19 @@ class UserController extends Controller
         $lastName = array_key_exists('last_name', $data) ? $data['last_name'] : $user?->last_name;
 
         $payload = $data;
+
+        if (array_key_exists('isAdmin', $payload)) {
+            $payload['is_admin'] = $payload['isAdmin'];
+            unset($payload['isAdmin']);
+        }
+
+        if (array_key_exists('password', $payload)) {
+            if ($payload['password']) {
+                $payload['password'] = Hash::make($payload['password']);
+            } else {
+                unset($payload['password']);
+            }
+        }
 
         if ($firstName) {
             $payload['name'] = trim($firstName.' '.($lastName ?? ''));

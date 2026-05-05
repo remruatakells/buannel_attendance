@@ -25,7 +25,7 @@ class AttendanceController extends Controller
         if (! $user) {
             return response()->json([
                 'status' => false,
-                'message' => 'User not found',
+                'message' => 'User not found, enroll first.',
             ], 404);
         }
 
