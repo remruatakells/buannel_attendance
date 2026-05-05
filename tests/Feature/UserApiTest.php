@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Organization;
 use App\Models\UserModel;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -12,12 +13,18 @@ class UserApiTest extends TestCase
 
     public function test_user_can_be_created_separately_from_attendance(): void
     {
+        $organization = Organization::factory()->create([
+            'name' => 'Buannel',
+            'type' => 'company',
+        ]);
+
         $response = $this->postJson('/api/users', [
             'employee_id' => 'EMP001',
             'first_name' => 'John',
             'last_name' => 'Doe',
             'phone_no' => '9000000001',
             'device_id' => 'MORPHO_01',
+            'organization_id' => $organization->id,
         ]);
 
         $response
@@ -27,6 +34,7 @@ class UserApiTest extends TestCase
             ->assertJsonPath('data.first_name', 'John')
             ->assertJsonPath('data.name', 'John Doe')
             ->assertJsonPath('data.phone_no', '9000000001')
+            ->assertJsonPath('data.organization.id', $organization->id)
             ->assertJsonMissingPath('data.password');
 
         $this->assertDatabaseHas('users', [
@@ -35,6 +43,7 @@ class UserApiTest extends TestCase
             'last_name' => 'Doe',
             'phone_no' => '9000000001',
             'device_id' => 'MORPHO_01',
+            'organization_id' => $organization->id,
         ]);
     }
 
@@ -67,11 +76,14 @@ class UserApiTest extends TestCase
 
     public function test_user_can_be_created_with_profile_image_link(): void
     {
+        $organization = Organization::factory()->create();
+
         $response = $this->postJson('/api/users', [
             'employee_id' => 'EMP001',
             'first_name' => 'John',
             'last_name' => 'Doe',
             'profile_image' => 'https://example.com/profile.jpg',
+            'organization_id' => $organization->id,
         ]);
 
         $response
@@ -83,6 +95,7 @@ class UserApiTest extends TestCase
         $this->assertDatabaseHas('users', [
             'employee_id' => 'EMP001',
             'profile_image' => 'https://example.com/profile.jpg',
+            'organization_id' => $organization->id,
         ]);
     }
 
@@ -102,5 +115,80 @@ class UserApiTest extends TestCase
             'id' => $user->id,
             'profile_image' => 'https://example.com/new-profile.png',
         ]);
+    }
+
+    public function test_user_index_is_scoped_to_viewers_organization(): void
+    {
+        $buannel = Organization::factory()->create();
+        $university = Organization::factory()->create();
+
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'organization_id' => $buannel->id,
+        ]);
+        UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'organization_id' => $buannel->id,
+        ]);
+        UserModel::factory()->create([
+            'employee_id' => 'EMP002',
+            'organization_id' => $university->id,
+        ]);
+
+        $this->getJson('/api/users?viewer_employee_id=ADMIN001')
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.employee_id', 'ADMIN001')
+            ->assertJsonPath('data.1.employee_id', 'EMP001');
+    }
+
+    public function test_user_cannot_be_created_without_an_organization(): void
+    {
+        $this->postJson('/api/users', [
+            'employee_id' => 'EMP001',
+            'first_name' => 'John',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('organization_id');
+    }
+
+    public function test_scoped_viewer_cannot_create_user_in_another_organization(): void
+    {
+        $buannel = Organization::factory()->create();
+        $university = Organization::factory()->create();
+
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'organization_id' => $buannel->id,
+        ]);
+
+        $this->postJson('/api/users?viewer_employee_id=ADMIN001', [
+            'employee_id' => 'EMP001',
+            'first_name' => 'John',
+            'organization_id' => $university->id,
+        ])
+            ->assertForbidden()
+            ->assertJsonPath('message', 'Organization not allowed');
+    }
+
+    public function test_scoped_viewer_cannot_move_user_to_another_organization(): void
+    {
+        $buannel = Organization::factory()->create();
+        $university = Organization::factory()->create();
+
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'organization_id' => $buannel->id,
+        ]);
+        $user = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'organization_id' => $buannel->id,
+        ]);
+
+        $this->putJson("/api/users/{$user->id}?viewer_employee_id=ADMIN001", [
+            'organization_id' => $university->id,
+        ])
+            ->assertForbidden()
+            ->assertJsonPath('message', 'Organization not allowed');
     }
 }

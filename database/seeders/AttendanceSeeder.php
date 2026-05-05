@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\Attendance;
+use App\Models\Organization;
 use App\Models\UserModel;
 use Carbon\Carbon;
 use Illuminate\Database\Seeder;
@@ -11,24 +12,36 @@ class AttendanceSeeder extends Seeder
 {
     public function run(): void
     {
+        $buannel = Organization::firstOrCreate(
+            ['name' => 'Buannel'],
+            ['type' => 'company'],
+        );
+        $mizoramUniversity = Organization::firstOrCreate(
+            ['name' => 'Mizoram University'],
+            ['type' => 'university'],
+        );
+
         $users = [
             [
                 'user_id' => 'EMP001',
                 'first_name' => 'John',
                 'last_name' => 'Doe',
                 'phone_no' => '9000000001',
+                'organization_id' => $buannel->id,
             ],
             [
                 'user_id' => 'EMP002',
                 'first_name' => 'Jane',
                 'last_name' => 'Smith',
                 'phone_no' => '9000000002',
+                'organization_id' => $buannel->id,
             ],
             [
                 'user_id' => 'EMP003',
                 'first_name' => 'David',
                 'last_name' => 'Lal',
                 'phone_no' => '9000000003',
+                'organization_id' => $mizoramUniversity->id,
             ],
         ];
 
@@ -40,6 +53,7 @@ class AttendanceSeeder extends Seeder
                     'last_name' => $user['last_name'],
                     'phone_no' => $user['phone_no'],
                     'device_id' => 'MORPHO_01',
+                    'organization_id' => $user['organization_id'],
                     'name' => $user['first_name'].' '.$user['last_name'],
                 ],
             );

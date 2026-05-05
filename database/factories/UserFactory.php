@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Organization;
 use App\Models\UserModel;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Str;
@@ -27,6 +28,7 @@ class UserFactory extends Factory
             'phone_no' => fake()->optional()->phoneNumber(),
             'device_id' => fake()->optional()->bothify('DEVICE_##'),
             'profile_image' => null,
+            'organization_id' => Organization::factory(),
             'name' => fake()->name(),
             'remember_token' => Str::random(10),
         ];

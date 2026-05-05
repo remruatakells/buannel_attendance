@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Attendance;
+use App\Models\Organization;
 use App\Models\UserModel;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -345,15 +346,18 @@ class AttendanceApiTest extends TestCase
 
     public function test_admin_attendance_can_be_filtered_by_month(): void
     {
+        $organization = Organization::factory()->create();
         $john = UserModel::factory()->create([
             'employee_id' => 'EMP001',
             'first_name' => 'John',
             'last_name' => 'Doe',
+            'organization_id' => $organization->id,
         ]);
         $jane = UserModel::factory()->create([
             'employee_id' => 'EMP002',
             'first_name' => 'Jane',
             'last_name' => 'Smith',
+            'organization_id' => $organization->id,
         ]);
 
         Attendance::create([
@@ -389,6 +393,75 @@ class AttendanceApiTest extends TestCase
             ->assertJsonPath('data.0.user.employee_id', 'EMP002')
             ->assertJsonPath('data.1.attendance_date', '2026-04-10')
             ->assertJsonPath('data.1.user.employee_id', 'EMP001');
+    }
+
+    public function test_admin_attendance_is_scoped_to_viewers_organization(): void
+    {
+        $buannel = Organization::factory()->create([
+            'name' => 'Buannel',
+            'type' => 'company',
+        ]);
+        $university = Organization::factory()->create([
+            'name' => 'Mizoram University',
+            'type' => 'university',
+        ]);
+        $admin = UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'organization_id' => $buannel->id,
+        ]);
+        $sameOrganizationUser = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'organization_id' => $admin->organization_id,
+        ]);
+        $otherOrganizationUser = UserModel::factory()->create([
+            'employee_id' => 'EMP002',
+            'organization_id' => $university->id,
+        ]);
+
+        foreach ([$sameOrganizationUser, $otherOrganizationUser] as $index => $user) {
+            Attendance::create([
+                'user_id' => $user->id,
+                'attendance_date' => '2026-04-1'.($index + 1),
+                'check_in' => '09:00:00',
+                'check_out' => '17:30:00',
+                'status' => 'present',
+            ]);
+        }
+
+        $this->getJson('/api/attendance/admin?month=2026-04', [
+            'X-Admin-Employee-Id' => 'ADMIN001',
+        ])
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.user.employee_id', 'EMP001')
+            ->assertJsonPath('data.0.user.organization.id', $buannel->id);
+    }
+
+    public function test_user_attendance_cannot_read_another_organization_when_viewer_is_supplied(): void
+    {
+        $buannel = Organization::factory()->create();
+        $university = Organization::factory()->create();
+
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'organization_id' => $buannel->id,
+        ]);
+        $otherOrganizationUser = UserModel::factory()->create([
+            'employee_id' => 'EMP002',
+            'organization_id' => $university->id,
+        ]);
+
+        Attendance::create([
+            'user_id' => $otherOrganizationUser->id,
+            'attendance_date' => '2026-04-10',
+            'check_in' => '09:00:00',
+            'check_out' => '17:30:00',
+            'status' => 'present',
+        ]);
+
+        $this->getJson('/api/attendance/user/EMP002?viewer_employee_id=ADMIN001')
+            ->assertNotFound()
+            ->assertJsonPath('message', 'User not found');
     }
 
     public function test_admin_attendance_rejects_invalid_month_filter(): void

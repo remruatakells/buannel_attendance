@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Attendance;
 use App\Models\UserModel;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -87,9 +88,15 @@ class AttendanceController extends Controller
         ]);
     }
 
-    public function today()
+    public function today(Request $request)
     {
-        $data = Attendance::with('user')
+        $viewer = $this->viewerFromRequest($request);
+
+        if ($this->viewerWasRequested($request) && ! $viewer) {
+            return $this->viewerNotFoundResponse();
+        }
+
+        $data = $this->visibleAttendanceQuery($viewer)
             ->whereDate('attendance_date', Carbon::today())
             ->orderByDesc('id')
             ->get();
@@ -106,7 +113,13 @@ class AttendanceController extends Controller
             'month' => ['sometimes', 'date_format:Y-m'],
         ]);
 
-        $query = Attendance::with('user');
+        $viewer = $this->viewerFromRequest($request);
+
+        if ($this->viewerWasRequested($request) && ! $viewer) {
+            return $this->viewerNotFoundResponse();
+        }
+
+        $query = $this->visibleAttendanceQuery($viewer);
 
         if (isset($validated['month'])) {
             $month = Carbon::createFromFormat('Y-m', $validated['month']);
@@ -135,7 +148,15 @@ class AttendanceController extends Controller
             'month' => ['sometimes', 'date_format:Y-m'],
         ]);
 
-        $user = UserModel::where('employee_id', $userId)->first();
+        $viewer = $this->viewerFromRequest($request);
+
+        if ($this->viewerWasRequested($request) && ! $viewer) {
+            return $this->viewerNotFoundResponse();
+        }
+
+        $user = UserModel::visibleTo($viewer)
+            ->where('employee_id', $userId)
+            ->first();
 
         if (! $user) {
             return response()->json([
@@ -167,7 +188,13 @@ class AttendanceController extends Controller
 
     public function update(Request $request, $id)
     {
-        $attendance = Attendance::with('user')->find($id);
+        $viewer = $this->viewerFromRequest($request);
+
+        if ($this->viewerWasRequested($request) && ! $viewer) {
+            return $this->viewerNotFoundResponse();
+        }
+
+        $attendance = $this->visibleAttendanceQuery($viewer)->find($id);
 
         if (! $attendance) {
             return response()->json([
@@ -192,9 +219,15 @@ class AttendanceController extends Controller
         ]);
     }
 
-    public function delete($id)
+    public function delete(Request $request, $id)
     {
-        $attendance = Attendance::find($id);
+        $viewer = $this->viewerFromRequest($request);
+
+        if ($this->viewerWasRequested($request) && ! $viewer) {
+            return $this->viewerNotFoundResponse();
+        }
+
+        $attendance = $this->visibleAttendanceQuery($viewer)->find($id);
 
         if (! $attendance) {
             return response()->json([
@@ -209,5 +242,43 @@ class AttendanceController extends Controller
             'status' => true,
             'message' => 'Attendance deleted',
         ]);
+    }
+
+    private function visibleAttendanceQuery(?UserModel $viewer): Builder
+    {
+        return Attendance::with('user.organization')
+            ->whereHas('user', fn (Builder $query) => $query->visibleTo($viewer));
+    }
+
+    private function viewerFromRequest(Request $request): ?UserModel
+    {
+        $employeeId = $this->viewerIdentifier($request);
+
+        if (! $employeeId) {
+            return null;
+        }
+
+        return UserModel::where('employee_id', $employeeId)->first();
+    }
+
+    private function viewerWasRequested(Request $request): bool
+    {
+        return (bool) $this->viewerIdentifier($request);
+    }
+
+    private function viewerIdentifier(Request $request): ?string
+    {
+        return $request->input('viewer_employee_id')
+            ?? $request->input('admin_employee_id')
+            ?? $request->header('X-Viewer-Employee-Id')
+            ?? $request->header('X-Admin-Employee-Id');
+    }
+
+    private function viewerNotFoundResponse()
+    {
+        return response()->json([
+            'status' => false,
+            'message' => 'Viewer not found',
+        ], 404);
     }
 }

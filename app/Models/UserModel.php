@@ -3,8 +3,10 @@
 namespace App\Models;
 
 use Database\Factories\UserFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class UserModel extends Model
@@ -25,11 +27,26 @@ class UserModel extends Model
         'phone_no',
         'device_id',
         'profile_image',
+        'organization_id',
         'name',
     ];
+
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class);
+    }
 
     public function attendances(): HasMany
     {
         return $this->hasMany(Attendance::class, 'user_id');
+    }
+
+    public function scopeVisibleTo(Builder $query, ?self $viewer): Builder
+    {
+        if (! $viewer) {
+            return $query;
+        }
+
+        return $query->where('organization_id', $viewer->organization_id);
     }
 }
