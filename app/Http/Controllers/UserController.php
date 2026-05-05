@@ -6,6 +6,7 @@ use App\Models\UserModel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
+use Log;
 
 class UserController extends Controller
 {
@@ -121,44 +122,78 @@ class UserController extends Controller
 
     public function login(Request $request)
     {
-        $validated = $request->validate([
-            'phone_no' => ['required', 'string', 'max:255'],
-            'password' => ['required', 'string', 'max:255'],
-        ]);
+        try {
+            $validated = $request->validate([
+                'phone_no' => ['required', 'string', 'max:255'],
+                'password' => ['required', 'string', 'max:255'],
+            ]);
 
-        $user = UserModel::with('organization')
-            ->where('phone_no', $validated['phone_no'])
-            ->first();
-            
-        if (!$user || !$user->password || !Hash::check($validated['password'], $user->password)) {
+            $user = UserModel::with('organization')
+                ->where('phone_no', $validated['phone_no'])
+                ->first();
+
+            // 🔐 Invalid credentials
+            if (!$user || !$user->password || !Hash::check($validated['password'], $user->password)) {
+                return response()->json([
+                    'status' => false,
+                    'title' => 'Authentication Failed',
+                    'message' => 'The provided phone number or password is incorrect. Please verify your credentials and try again.',
+                ], 401);
+            }
+
+            // 🚫 Not admin
+            if (!$user->is_admin) {
+                return response()->json([
+                    'status' => false,
+                    'title' => 'Access Denied',
+                    'message' => 'You do not have the required administrative privileges to access this resource.',
+                ], 403);
+            }
+
+            // ✅ Success
+            return response()->json([
+                'status' => true,
+                'message' => 'Login successful.',
+                'data' => [
+                    'id' => $user->id,
+                    'employee_id' => $user->employee_id,
+                    'first_name' => $user->first_name,
+                    'last_name' => $user->last_name,
+                    'phone_no' => $user->phone_no,
+                    'isAdmin' => $user->is_admin,
+                    'organization_id' => $user->organization_id,
+                    'organization' => $user->organization ? [
+                        'id' => $user->organization->id,
+                        'name' => $user->organization->name,
+                    ] : null,
+                ],
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+
             return response()->json([
                 'status' => false,
-                'message' => 'The provided phone number or password is incorrect. Please verify your credentials and try again.',
-            ], 401);
-        }
+                'title' => 'Validation Error',
+                'message' => 'Invalid input provided.',
+                'errors' => $e->errors(),
+            ], 422);
 
-        if (!$user->is_admin) {
+        } catch (\Exception $e) {
+
+            // Log for debugging (important in production)
+            Log::error('Login Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
                 'status' => false,
-                'message' => 'Access denied. You do not have the required administrative privileges to perform this action.',
-            ], 403);
+                'title' => 'Server Error',
+                'message' => 'An unexpected error occurred. Please try again later.',
+                'error' => $e->getMessage(),
+            ], 500);
         }
-
-        return response()->json([
-            'status' => true,
-            'message' => 'Login successful',
-            'data' => [
-                'id' => $user->id,
-                'employee_id' => $user->employee_id,
-                'first_name' => $user->first_name,
-                'last_name' => $user->last_name,
-                'phone_no' => $user->phone_no,
-                'isAdmin' => $user->is_admin,
-                'organization_id' => $user->organization_id,
-            ],
-        ]);
     }
-
     /**
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
