@@ -214,6 +214,68 @@ class AttendanceApiTest extends TestCase
         ]);
     }
 
+    public function test_check_in_after_organization_late_time_is_marked_late(): void
+    {
+        Carbon::setTestNow('2026-04-29 09:45:00 AM');
+
+        $organization = Organization::factory()->create();
+        $organization->timing()->create([
+            'check_in_start' => '09:00:00',
+            'check_in_end' => '10:00:00',
+            'late_after' => '09:30:00',
+            'check_out_start' => '16:00:00',
+        ]);
+
+        $user = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'organization_id' => $organization->id,
+        ]);
+
+        $this->postJson('/api/attendance', [
+            'user_id' => 'EMP001',
+        ])
+            ->assertOk()
+            ->assertJsonPath('action', 'check_in')
+            ->assertJsonPath('data.status', 'late');
+
+        $this->assertDatabaseHas('attendances', [
+            'user_id' => $user->id,
+            'attendance_date' => '2026-04-29',
+            'check_in' => '09:45:00',
+            'status' => 'late',
+        ]);
+    }
+
+    public function test_mark_attendance_uses_organization_timing_window(): void
+    {
+        Carbon::setTestNow('2026-04-29 10:30:00 AM');
+
+        $organization = Organization::factory()->create();
+        $organization->timing()->create([
+            'check_in_start' => '10:00:00',
+            'check_in_end' => '11:00:00',
+            'late_after' => '10:45:00',
+            'check_out_start' => '17:00:00',
+        ]);
+
+        $user = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'organization_id' => $organization->id,
+        ]);
+
+        $this->postJson('/api/attendance', [
+            'user_id' => 'EMP001',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'present');
+
+        $this->assertDatabaseHas('attendances', [
+            'user_id' => $user->id,
+            'attendance_date' => '2026-04-29',
+            'status' => 'present',
+        ]);
+    }
+
     public function test_check_out_is_rejected_before_allowed_window(): void
     {
         Carbon::setTestNow('2026-04-29 09:15:00 AM');

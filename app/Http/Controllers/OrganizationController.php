@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Organization;
+use App\Models\OrganizationTiming;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -12,7 +13,8 @@ class OrganizationController extends Controller
     {
         return response()->json([
             'status' => true,
-            'data' => Organization::withCount('users')
+            'data' => Organization::with('timing')
+                ->withCount('users')
                 ->orderBy('name')
                 ->get(),
         ]);
@@ -26,11 +28,12 @@ class OrganizationController extends Controller
         ]);
 
         $organization = Organization::create($validated);
+        $organization->timing()->create(OrganizationTiming::defaults());
 
         return response()->json([
             'status' => true,
             'message' => 'Organization created',
-            'data' => $organization,
+            'data' => $organization->load('timing'),
         ], 201);
     }
 
@@ -38,7 +41,7 @@ class OrganizationController extends Controller
     {
         return response()->json([
             'status' => true,
-            'data' => $organization->loadCount('users'),
+            'data' => $organization->load('timing')->loadCount('users'),
         ]);
     }
 
@@ -54,7 +57,7 @@ class OrganizationController extends Controller
         return response()->json([
             'status' => true,
             'message' => 'Organization updated',
-            'data' => $organization,
+            'data' => $organization->load('timing'),
         ]);
     }
 

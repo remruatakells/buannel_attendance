@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\Organization;
+use App\Models\OrganizationTiming;
 use App\Models\UserModel;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
@@ -23,6 +24,7 @@ class DatabaseSeeder extends Seeder
             ['name' => 'Buannel'],
             ['type' => 'company'],
         );
+        $organization->timing()->firstOrCreate([], OrganizationTiming::defaults());
 
         UserModel::factory()->create([
             'employee_id' => 'ADMIN001',

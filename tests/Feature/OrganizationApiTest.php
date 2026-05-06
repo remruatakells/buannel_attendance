@@ -40,11 +40,22 @@ class OrganizationApiTest extends TestCase
             ->assertJsonPath('status', true)
             ->assertJsonPath('message', 'Organization created')
             ->assertJsonPath('data.name', 'Buannel')
-            ->assertJsonPath('data.type', 'company');
+            ->assertJsonPath('data.type', 'company')
+            ->assertJsonPath('data.timing.check_in_start', '09:00:00')
+            ->assertJsonPath('data.timing.check_in_end', '10:00:00')
+            ->assertJsonPath('data.timing.late_after', '09:30:00')
+            ->assertJsonPath('data.timing.check_out_start', '16:00:00');
 
         $this->assertDatabaseHas('organizations', [
             'name' => 'Buannel',
             'type' => 'company',
+        ]);
+
+        $this->assertDatabaseHas('organization_timings', [
+            'check_in_start' => '09:00:00',
+            'check_in_end' => '10:00:00',
+            'late_after' => '09:30:00',
+            'check_out_start' => '16:00:00',
         ]);
     }
 
@@ -96,6 +107,53 @@ class OrganizationApiTest extends TestCase
             'name' => 'Mizoram University',
             'type' => 'university',
         ]);
+    }
+
+    public function test_organization_timing_can_be_shown_and_updated(): void
+    {
+        $organization = Organization::factory()->create();
+
+        $this->getJson("/api/organizations/{$organization->id}/timing")
+            ->assertOk()
+            ->assertJsonPath('status', true)
+            ->assertJsonPath('data.organization_id', $organization->id)
+            ->assertJsonPath('data.check_in_start', '09:00:00');
+
+        $this->putJson("/api/organizations/{$organization->id}/timing", [
+            'check_in_start' => '10:00:00',
+            'check_in_end' => '11:00:00',
+            'late_after' => '10:30:00',
+            'check_out_start' => '17:00:00',
+        ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Organization timing updated')
+            ->assertJsonPath('data.organization_id', $organization->id)
+            ->assertJsonPath('data.check_in_start', '10:00:00')
+            ->assertJsonPath('data.check_in_end', '11:00:00')
+            ->assertJsonPath('data.late_after', '10:30:00')
+            ->assertJsonPath('data.check_out_start', '17:00:00');
+
+        $this->assertDatabaseHas('organization_timings', [
+            'organization_id' => $organization->id,
+            'check_in_start' => '10:00:00',
+            'check_in_end' => '11:00:00',
+            'late_after' => '10:30:00',
+            'check_out_start' => '17:00:00',
+        ]);
+    }
+
+    public function test_organization_timing_late_time_must_be_inside_check_in_window(): void
+    {
+        $organization = Organization::factory()->create();
+
+        $this->putJson("/api/organizations/{$organization->id}/timing", [
+            'check_in_start' => '10:00:00',
+            'check_in_end' => '11:00:00',
+            'late_after' => '11:30:00',
+            'check_out_start' => '17:00:00',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('late_after');
     }
 
     public function test_organization_can_be_deleted_when_no_users_belong_to_it(): void

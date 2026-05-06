@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Attendance;
 use App\Models\Organization;
+use App\Models\OrganizationTiming;
 use App\Models\UserModel;
 use Carbon\Carbon;
 use Illuminate\Database\Seeder;
@@ -20,6 +21,9 @@ class AttendanceSeeder extends Seeder
             ['name' => 'Mizoram University'],
             ['type' => 'university'],
         );
+
+        $buannel->timing()->firstOrCreate([], OrganizationTiming::defaults());
+        $mizoramUniversity->timing()->firstOrCreate([], OrganizationTiming::defaults());
 
         $users = [
             [

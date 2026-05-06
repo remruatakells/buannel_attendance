@@ -146,7 +146,7 @@ class UserController extends Controller
                 return response()->json([
                     'status' => false,
                     'title' => 'Access Denied',
-                    'message' => 'You do not have the required administrative privileges to access this resource.',
+                    'message' => 'User is not admin',
                 ], 403);
             }
 

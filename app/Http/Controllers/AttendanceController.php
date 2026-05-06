@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Attendance;
+use App\Models\OrganizationTiming;
 use App\Models\UserModel;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -20,14 +21,18 @@ class AttendanceController extends Controller
         $today = Carbon::today()->toDateString();
         $now = Carbon::now();
         $time = $now->format('H:i:s');
-        $user = UserModel::where('employee_id', $validated['user_id'])->first();
+        $user = UserModel::with('organization.timing')
+            ->where('employee_id', $validated['user_id'])
+            ->first();
 
         if (! $user) {
             return response()->json([
                 'status' => false,
-                'message' => 'User not found, enroll first.',
+                'message' => 'User not found',
             ], 404);
         }
+
+        $timing = $user->organization?->timing ?? OrganizationTiming::defaultTiming();
 
         $attendance = Attendance::where('user_id', $user->id)
             ->whereDate('attendance_date', $today)
@@ -43,19 +48,24 @@ class AttendanceController extends Controller
         }
 
         if (! $attendance) {
-            if (! $now->betweenIncluded($now->copy()->setTime(9, 0), $now->copy()->setTime(12, 0))) {
+            $checkInStart = $this->timeToday($now, $timing->check_in_start);
+            $checkInEnd = $this->timeToday($now, $timing->check_in_end);
+
+            if (! $now->betweenIncluded($checkInStart, $checkInEnd)) {
                 return response()->json([
                     'status' => false,
-                    'message' => 'Check-in is allowed only between 09:00 AM and 12:00 PM',
+                    'message' => 'Check-in is allowed only between '.$checkInStart->format('h:i A').' and '.$checkInEnd->format('h:i A'),
                     'action' => 'check_in_closed',
                 ], 409);
             }
+
+            $lateAfter = $this->timeToday($now, $timing->late_after);
 
             $attendance = Attendance::create([
                 'user_id' => $user->id,
                 'attendance_date' => $today,
                 'check_in' => $time,
-                'status' => 'present',
+                'status' => $now->gt($lateAfter) ? 'late' : 'present',
             ])->load('user');
 
             return response()->json([
@@ -66,10 +76,12 @@ class AttendanceController extends Controller
             ]);
         }
 
-        if ($now->lt($now->copy()->setTime(16, 0))) {
+        $checkOutStart = $this->timeToday($now, $timing->check_out_start);
+
+        if ($now->lt($checkOutStart)) {
             return response()->json([
                 'status' => false,
-                'message' => 'Check-out is allowed from 04:00 PM',
+                'message' => 'Check-out is allowed from '.$checkOutStart->format('h:i A'),
                 'action' => 'check_out_closed',
                 'data' => $attendance->load('user'),
             ], 409);
@@ -272,6 +284,11 @@ class AttendanceController extends Controller
     {
         return Attendance::with('user.organization')
             ->whereHas('user', fn (Builder $query) => $query->visibleTo($viewer));
+    }
+
+    private function timeToday(Carbon $date, string $time): Carbon
+    {
+        return $date->copy()->setTimeFromTimeString($time);
     }
 
     private function viewerFromRequest(Request $request): ?UserModel

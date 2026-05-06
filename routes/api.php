@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\OrganizationController;
+use App\Http\Controllers\OrganizationTimingController;
 use App\Http\Controllers\UserController;
 
 Route::prefix('attendance')->group(function () {
@@ -27,6 +28,9 @@ Route::prefix('attendance')->group(function () {
     Route::put('/organizations/{organization}', [OrganizationController::class, 'update']);
     Route::patch('/organizations/{organization}', [OrganizationController::class, 'update']);
     Route::delete('/organizations/{organization}', [OrganizationController::class, 'destroy']);
+    Route::get('/organizations/{organization}/timing', [OrganizationTimingController::class, 'show']);
+    Route::put('/organizations/{organization}/timing', [OrganizationTimingController::class, 'update']);
+    Route::patch('/organizations/{organization}/timing', [OrganizationTimingController::class, 'update']);
 
     Route::post('/login', [UserController::class, 'login']);
 });
