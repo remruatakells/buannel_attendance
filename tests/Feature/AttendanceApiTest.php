@@ -313,6 +313,8 @@ class AttendanceApiTest extends TestCase
 
     public function test_user_attendance_can_be_filtered_by_month(): void
     {
+        Carbon::setTestNow('2026-05-06 10:00:00 AM');
+
         $user = UserModel::factory()->create([
             'employee_id' => 'EMP001',
             'first_name' => 'John',
@@ -339,9 +341,44 @@ class AttendanceApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('status', true)
             ->assertJsonPath('month', '2026-04')
-            ->assertJsonCount(1, 'data')
-            ->assertJsonPath('data.0.attendance_date', '2026-04-10')
-            ->assertJsonPath('data.0.check_in', '09:00:00 AM');
+            ->assertJsonCount(30, 'data')
+            ->assertJsonPath('data.0.attendance_date', '2026-04-30')
+            ->assertJsonPath('data.0.status', 'absent')
+            ->assertJsonFragment([
+                'attendance_date' => '2026-04-10',
+                'check_in' => '09:00:00 AM',
+                'status' => 'present',
+            ]);
+    }
+
+    public function test_user_attendance_includes_absent_days_for_current_month_until_today(): void
+    {
+        Carbon::setTestNow('2026-05-06 10:00:00 AM');
+
+        $user = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+        ]);
+
+        Attendance::create([
+            'user_id' => $user->id,
+            'attendance_date' => '2026-05-04',
+            'check_in' => '09:00:00',
+            'check_out' => '17:30:00',
+            'status' => 'present',
+        ]);
+
+        $this->getJson('/api/attendance/user/EMP001')
+            ->assertOk()
+            ->assertJsonPath('status', true)
+            ->assertJsonPath('month', '2026-05')
+            ->assertJsonCount(6, 'data')
+            ->assertJsonPath('data.0.attendance_date', '2026-05-06')
+            ->assertJsonPath('data.0.status', 'absent')
+            ->assertJsonPath('data.2.attendance_date', '2026-05-04')
+            ->assertJsonPath('data.2.status', 'present')
+            ->assertJsonPath('data.2.check_in', '09:00:00 AM');
     }
 
     public function test_admin_attendance_can_be_filtered_by_month(): void

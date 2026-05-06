@@ -165,23 +165,47 @@ class AttendanceController extends Controller
             ], 404);
         }
 
-        $query = Attendance::with('user')
-            ->where('user_id', $user->id);
+        $month = isset($validated['month'])
+            ? Carbon::createFromFormat('Y-m', $validated['month'])
+            : Carbon::today();
 
-        if (isset($validated['month'])) {
-            $month = Carbon::createFromFormat('Y-m', $validated['month']);
+        $startDate = $month->copy()->startOfMonth();
+        $endDate = $month->copy()->endOfMonth();
 
-            $query->whereBetween('attendance_date', [
-                $month->copy()->startOfMonth()->toDateString(),
-                $month->copy()->endOfMonth()->toDateString(),
+        if ($endDate->isFuture()) {
+            $endDate = Carbon::today();
+        }
+
+        $attendances = Attendance::with('user')
+            ->where('user_id', $user->id)
+            ->whereBetween('attendance_date', [
+                $startDate->toDateString(),
+                $endDate->toDateString(),
+            ])
+            ->get()
+            ->keyBy(fn (Attendance $attendance) => Carbon::parse($attendance->attendance_date)->toDateString());
+
+        $data = collect();
+
+        for ($date = $endDate->copy(); $date->gte($startDate); $date->subDay()) {
+            $dateString = $date->toDateString();
+
+            $data->push($attendances->get($dateString) ?? [
+                'id' => null,
+                'user_id' => $user->id,
+                'attendance_date' => $dateString,
+                'check_in' => null,
+                'check_out' => null,
+                'status' => 'absent',
+                'created_at' => null,
+                'updated_at' => null,
+                'user' => $user,
             ]);
         }
 
-        $data = $query->orderByDesc('attendance_date')->get();
-
         return response()->json([
             'status' => true,
-            'month' => $validated['month'] ?? null,
+            'month' => $month->format('Y-m'),
             'data' => $data,
         ]);
     }
