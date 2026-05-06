@@ -43,10 +43,10 @@ class AttendanceController extends Controller
         }
 
         if (! $attendance) {
-            if (! $now->betweenIncluded($now->copy()->setTime(9, 0), $now->copy()->setTime(10, 0))) {
+            if (! $now->betweenIncluded($now->copy()->setTime(9, 0), $now->copy()->setTime(12, 0))) {
                 return response()->json([
                     'status' => false,
-                    'message' => 'Check-in is allowed only between 09:00 AM and 10:00 AM',
+                    'message' => 'Check-in is allowed only between 09:00 AM and 12:00 PM',
                     'action' => 'check_in_closed',
                 ], 409);
             }
