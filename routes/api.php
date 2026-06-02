@@ -14,7 +14,9 @@ Route::prefix('attendance')->group(function () {
     Route::middleware([AdminAccessToken::class])->group(function () {
         Route::get('/admin', [AttendanceController::class, 'adminAttendance']);
         Route::post('/admin', [AttendanceController::class, 'storeAdmin']);
+        Route::get('/admin/excel', [AttendanceController::class, 'adminAttendanceExcel']);
         Route::get('/today', [AttendanceController::class, 'today']);
+        Route::get('/user/{userId}/excel', [AttendanceController::class, 'userAttendanceExcel']);
         Route::get('/user/{userId}', [AttendanceController::class, 'userAttendance']);
 
         Route::put('/update/{id}', [AttendanceController::class, 'update']);

@@ -439,6 +439,48 @@ class AttendanceApiTest extends TestCase
             ]);
     }
 
+    public function test_user_attendance_can_be_downloaded_as_excel_csv(): void
+    {
+        Carbon::setTestNow('2026-05-06 10:00:00 AM');
+
+        $user = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+        ]);
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'admin_access_token' => 'admin-token',
+            'organization_id' => $user->organization_id,
+        ]);
+
+        Attendance::create([
+            'user_id' => $user->id,
+            'attendance_date' => '2026-04-10',
+            'check_in' => '09:00:00',
+            'check_out' => '17:30:00',
+            'status' => 'present',
+            'remark' => 'On time',
+        ]);
+
+        $response = $this->get('/api/attendance/user/EMP001/excel?month=2026-04', [
+            'X-Admin-Access-Token' => 'admin-token',
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertDownload('attendance-history-EMP001-2026-04.csv');
+
+        $content = $response->streamedContent();
+
+        $this->assertStringContainsString('"Employee ID",EMP001', $content);
+        $this->assertStringContainsString('"Employee Name","John Doe"', $content);
+        $this->assertStringContainsString('Date,Day,Status,"Check In","Check Out","Late Duration","Worked Duration","Salary Cut",Remark', $content);
+        $this->assertStringContainsString('2026-04-10,Friday,present,"09:00:00 AM","05:30:00 PM"', $content);
+        $this->assertStringContainsString('"On time"', $content);
+    }
+
     public function test_user_attendance_includes_absent_days_for_current_month_until_today(): void
     {
         Carbon::setTestNow('2026-05-06 10:00:00 AM');
@@ -520,6 +562,7 @@ class AttendanceApiTest extends TestCase
             ->assertJsonPath('summary.total_late_minutes', 15)
             ->assertJsonPath('summary.total_late_duration', '00:15:30')
             ->assertJsonPath('summary.total_salary_cut', 21031.25)
+            ->assertJsonPath('summary.payable_salary', 8968.75)
             ->assertJsonPath('employee.employee_id', 'EMP001')
             ->assertJsonPath('employee.organization.id', $organization->id)
             ->assertJsonFragment([
@@ -609,6 +652,12 @@ class AttendanceApiTest extends TestCase
             'last_name' => 'Smith',
             'organization_id' => $organization->id,
         ]);
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'admin_access_token' => 'admin-token',
+            'organization_id' => $organization->id,
+        ]);
 
         Attendance::create([
             'user_id' => $john->id,
@@ -634,7 +683,9 @@ class AttendanceApiTest extends TestCase
             'status' => 'present',
         ]);
 
-        $this->getJson('/api/attendance/admin?month=2026-04')
+        $this->getJson('/api/attendance/admin?month=2026-04', [
+            'X-Admin-Access-Token' => 'admin-token',
+        ])
             ->assertOk()
             ->assertJsonPath('status', true)
             ->assertJsonPath('month', '2026-04')
@@ -645,6 +696,48 @@ class AttendanceApiTest extends TestCase
             ->assertJsonPath('data.0.detail.worked_duration', '08:00:00')
             ->assertJsonPath('data.1.attendance_date', '2026-04-10')
             ->assertJsonPath('data.1.user.employee_id', 'EMP001');
+    }
+
+    public function test_admin_attendance_can_be_downloaded_as_excel_csv(): void
+    {
+        $organization = Organization::factory()->create([
+            'name' => 'Buannel',
+        ]);
+        $john = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+            'organization_id' => $organization->id,
+        ]);
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'admin_access_token' => 'admin-token',
+            'organization_id' => $organization->id,
+        ]);
+
+        Attendance::create([
+            'user_id' => $john->id,
+            'attendance_date' => '2026-04-10',
+            'check_in' => '09:00:00',
+            'check_out' => '17:30:00',
+            'status' => 'present',
+            'remark' => 'On time',
+        ]);
+
+        $response = $this->get('/api/attendance/admin/excel?month=2026-04', [
+            'X-Admin-Access-Token' => 'admin-token',
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertDownload('admin-attendance-2026-04.csv');
+
+        $content = $response->streamedContent();
+
+        $this->assertStringContainsString('"Employee ID","Employee Name",Organization,Date,Status,"Check In","Check Out","Late Duration","Worked Duration","Salary Cut",Remark', $content);
+        $this->assertStringContainsString('EMP001,"John Doe",Buannel,2026-04-10,present,"09:00:00 AM","05:30:00 PM"', $content);
+        $this->assertStringContainsString('"On time"', $content);
     }
 
     public function test_admin_attendance_is_scoped_to_viewers_organization(): void
@@ -659,6 +752,8 @@ class AttendanceApiTest extends TestCase
         ]);
         $admin = UserModel::factory()->create([
             'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'admin_access_token' => 'admin-token',
             'organization_id' => $buannel->id,
         ]);
         $sameOrganizationUser = UserModel::factory()->create([
@@ -681,6 +776,7 @@ class AttendanceApiTest extends TestCase
         }
 
         $this->getJson('/api/attendance/admin?month=2026-04', [
+            'X-Admin-Access-Token' => 'admin-token',
             'X-Admin-Employee-Id' => 'ADMIN001',
         ])
             ->assertOk()
@@ -883,6 +979,8 @@ class AttendanceApiTest extends TestCase
 
         UserModel::factory()->create([
             'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'admin_access_token' => 'admin-token',
             'organization_id' => $buannel->id,
         ]);
         $otherOrganizationUser = UserModel::factory()->create([
@@ -898,14 +996,24 @@ class AttendanceApiTest extends TestCase
             'status' => 'present',
         ]);
 
-        $this->getJson('/api/attendance/user/EMP002?viewer_employee_id=ADMIN001')
+        $this->getJson('/api/attendance/user/EMP002?viewer_employee_id=ADMIN001', [
+            'X-Admin-Access-Token' => 'admin-token',
+        ])
             ->assertNotFound()
             ->assertJsonPath('message', 'User not found');
     }
 
     public function test_admin_attendance_rejects_invalid_month_filter(): void
     {
-        $this->getJson('/api/attendance/admin?month=04-2026')
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'admin_access_token' => 'admin-token',
+        ]);
+
+        $this->getJson('/api/attendance/admin?month=04-2026', [
+            'X-Admin-Access-Token' => 'admin-token',
+        ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('month');
     }
@@ -917,8 +1025,15 @@ class AttendanceApiTest extends TestCase
             'first_name' => 'John',
             'last_name' => 'Doe',
         ]);
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'admin_access_token' => 'admin-token',
+        ]);
 
-        $this->getJson('/api/attendance/user/EMP001?month=04-2026')
+        $this->getJson('/api/attendance/user/EMP001?month=04-2026', [
+            'X-Admin-Access-Token' => 'admin-token',
+        ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('month');
     }

@@ -136,42 +136,59 @@ class AttendanceController extends Controller
 
     public function adminAttendance(Request $request)
     {
+        $payload = $this->adminAttendancePayload($request);
+
+        if (isset($payload['response'])) {
+            return $payload['response'];
+        }
+
+        return response()->json([
+            'status' => true,
+            'month' => $payload['month'],
+            'data' => $payload['data'],
+        ]);
+    }
+
+    public function adminAttendanceExcel(Request $request)
+    {
         $validated = $request->validate([
             'month' => ['sometimes', 'date_format:Y-m'],
         ]);
 
-        $viewer = $this->viewerFromRequest($request);
+        $payload = $this->adminAttendancePayload($request, $validated);
 
-        if ($this->viewerWasRequested($request) && ! $viewer) {
-            return $this->viewerNotFoundResponse();
+        if (isset($payload['response'])) {
+            return $payload['response'];
         }
 
-        $query = $this->visibleAttendanceQuery($viewer);
-
-        if (isset($validated['month'])) {
-            $month = Carbon::createFromFormat('Y-m', $validated['month']);
-
-            $query->whereBetween('attendance_date', [
-                $month->copy()->startOfMonth()->toDateString(),
-                $month->copy()->endOfMonth()->toDateString(),
-            ]);
-        }
-
-        $data = $query
-            ->orderByDesc('attendance_date')
-            ->orderByDesc('id')
-            ->get()
-            ->map(fn (Attendance $attendance) => $this->withLateSalaryCut(
-                $attendance,
-                $attendance->user,
-                $attendance->user->organization?->timing ?? OrganizationTiming::defaultTiming()
-            ));
-
-        return response()->json([
-            'status' => true,
-            'month' => $validated['month'] ?? null,
-            'data' => $data,
+        $month = $payload['month'] ?? Carbon::today()->format('Y-m');
+        $rows = $payload['data']->map(fn ($record) => [
+            data_get($record, 'user.employee_id'),
+            $this->employeeName(data_get($record, 'user')),
+            data_get($record, 'user.organization.name'),
+            data_get($record, 'attendance_date'),
+            $this->attendanceStatusValue($record),
+            data_get($record, 'check_in'),
+            data_get($record, 'check_out'),
+            data_get($record, 'late_duration'),
+            data_get($record, 'detail.worked_duration'),
+            data_get($record, 'salary_cut'),
+            data_get($record, 'remark'),
         ]);
+
+        return $this->csvDownload('admin-attendance-'.$month.'.csv', [
+            'Employee ID',
+            'Employee Name',
+            'Organization',
+            'Date',
+            'Status',
+            'Check In',
+            'Check Out',
+            'Late Duration',
+            'Worked Duration',
+            'Salary Cut',
+            'Remark',
+        ], $rows);
     }
 
     public function storeAdmin(Request $request)
@@ -237,91 +254,75 @@ class AttendanceController extends Controller
 
     public function userAttendance(Request $request, $userId)
     {
-        $validated = $request->validate([
-            'month' => ['sometimes', 'date_format:Y-m'],
-        ]);
+        $payload = $this->userAttendancePayload($request, $userId);
 
-        $viewer = $this->viewerFromRequest($request);
-
-        if ($this->viewerWasRequested($request) && ! $viewer) {
-            return $this->viewerNotFoundResponse();
-        }
-
-        $user = UserModel::with(['organization.attendancePolicy', 'organization.timing', 'staffDetail'])
-            ->visibleTo($viewer)
-            ->where('employee_id', $userId)
-            ->first();
-
-        if (! $user) {
-            return response()->json([
-                'status' => false,
-                'message' => 'User not found',
-            ], 404);
-        }
-
-        $month = isset($validated['month'])
-            ? Carbon::createFromFormat('Y-m', $validated['month'])
-            : Carbon::today();
-
-        $startDate = $month->copy()->startOfMonth();
-        $endDate = $month->copy()->endOfMonth();
-
-        if ($endDate->isFuture()) {
-            $endDate = Carbon::today();
-        }
-
-        $attendances = Attendance::with('user')
-            ->where('user_id', $user->id)
-            ->whereBetween('attendance_date', [
-                $startDate->toDateString(),
-                $endDate->toDateString(),
-            ])
-            ->get()
-            ->keyBy(fn (Attendance $attendance) => Carbon::parse($attendance->attendance_date)->toDateString());
-
-        $data = collect();
-        $timing = $user->organization?->timing ?? OrganizationTiming::defaultTiming();
-        $leaveSummary = $this->leaveSummary($user, $startDate, $endDate);
-
-        for ($date = $endDate->copy(); $date->gte($startDate); $date->subDay()) {
-            if ($date->isWeekend()) {
-                continue;
-            }
-
-            $dateString = $date->toDateString();
-
-            $record = $attendances->get($dateString) ?? [
-                'id' => null,
-                'user_id' => $user->id,
-                'attendance_date' => $dateString,
-                'check_in' => null,
-                'check_out' => null,
-                'status' => AttendanceStatus::Absent->value,
-                'remark' => null,
-                'created_at' => null,
-                'updated_at' => null,
-                'user' => $user,
-            ];
-
-            $data->push($this->withLateSalaryCut($record, $user, $timing));
+        if (isset($payload['response'])) {
+            return $payload['response'];
         }
 
         return response()->json([
             'status' => true,
-            'month' => $month->format('Y-m'),
-            'employee' => $this->employeeDetail($user),
-            'summary' => [
-                'total_late_seconds' => $data->sum('late_seconds'),
-                'total_late_minutes' => $data->sum('late_minutes'),
-                'total_late_duration' => $this->formatDuration($data->sum('late_seconds')),
-                'total_salary_cut' => round($data->sum('salary_cut'), 2),
-                'leave_days' => $leaveSummary['leave_days'],
-                'annual_leave_taken' => $leaveSummary['annual_leave_taken'],
-                'annual_leave_limit' => $leaveSummary['annual_leave_limit'],
-                'annual_leave_remaining' => $leaveSummary['annual_leave_remaining'],
-            ],
-            'data' => $data,
+            'month' => $payload['month'],
+            'employee' => $payload['employee'],
+            'summary' => $payload['summary'],
+            'data' => $payload['data'],
         ]);
+    }
+
+    public function userAttendanceExcel(Request $request, $userId)
+    {
+        $validated = $request->validate([
+            'month' => ['sometimes', 'date_format:Y-m'],
+        ]);
+
+        $payload = $this->userAttendancePayload($request, $userId, $validated);
+
+        if (isset($payload['response'])) {
+            return $payload['response'];
+        }
+
+        $attendanceHeaders = [
+            'Date',
+            'Day',
+            'Status',
+            'Check In',
+            'Check Out',
+            'Late Duration',
+            'Worked Duration',
+            'Salary Cut',
+            'Remark',
+        ];
+        $summaryRows = collect([
+            ['Employee ID', $payload['employee']['employee_id']],
+            ['Employee Name', $this->employeeName($payload['employee'])],
+            ['Month', $payload['month']],
+            ['Total Late Duration', $payload['summary']['total_late_duration']],
+            ['Total Salary Cut', $payload['summary']['total_salary_cut']],
+            ['Payable Salary', $payload['summary']['payable_salary']],
+            ['Leave Days', $payload['summary']['leave_days']],
+            ['Annual Leave Taken', $payload['summary']['annual_leave_taken']],
+            ['Annual Leave Limit', $payload['summary']['annual_leave_limit']],
+            ['Annual Leave Remaining', $payload['summary']['annual_leave_remaining'] ?? 'Unlimited'],
+            [],
+            $attendanceHeaders,
+        ]);
+        $attendanceRows = $payload['data']->map(fn ($record) => [
+            data_get($record, 'attendance_date'),
+            data_get($record, 'detail.date.day_name'),
+            $this->attendanceStatusValue($record),
+            data_get($record, 'check_in'),
+            data_get($record, 'check_out'),
+            data_get($record, 'late_duration'),
+            data_get($record, 'detail.worked_duration'),
+            data_get($record, 'salary_cut'),
+            data_get($record, 'remark'),
+        ]);
+
+        return $this->csvDownload(
+            'attendance-history-'.$payload['employee']['employee_id'].'-'.$payload['month'].'.csv',
+            [],
+            $summaryRows->merge($attendanceRows)
+        );
     }
 
     public function update(Request $request, $id)
@@ -401,6 +402,161 @@ class AttendanceController extends Controller
             'status' => true,
             'message' => 'Attendance deleted',
         ]);
+    }
+
+    private function adminAttendancePayload(Request $request, ?array $validated = null): array
+    {
+        $validated ??= $request->validate([
+            'month' => ['sometimes', 'date_format:Y-m'],
+        ]);
+
+        $viewer = $this->viewerFromRequest($request);
+
+        if ($this->viewerWasRequested($request) && ! $viewer) {
+            return ['response' => $this->viewerNotFoundResponse()];
+        }
+
+        $query = $this->visibleAttendanceQuery($viewer);
+
+        if (isset($validated['month'])) {
+            $month = Carbon::createFromFormat('Y-m', $validated['month']);
+
+            $query->whereBetween('attendance_date', [
+                $month->copy()->startOfMonth()->toDateString(),
+                $month->copy()->endOfMonth()->toDateString(),
+            ]);
+        }
+
+        $data = $query
+            ->orderByDesc('attendance_date')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (Attendance $attendance) => $this->withLateSalaryCut(
+                $attendance,
+                $attendance->user,
+                $attendance->user->organization?->timing ?? OrganizationTiming::defaultTiming()
+            ));
+
+        return [
+            'month' => $validated['month'] ?? null,
+            'data' => $data,
+        ];
+    }
+
+    private function userAttendancePayload(Request $request, $userId, ?array $validated = null): array
+    {
+        $validated ??= $request->validate([
+            'month' => ['sometimes', 'date_format:Y-m'],
+        ]);
+
+        $viewer = $this->viewerFromRequest($request);
+
+        if ($this->viewerWasRequested($request) && ! $viewer) {
+            return ['response' => $this->viewerNotFoundResponse()];
+        }
+
+        $user = UserModel::with(['organization.attendancePolicy', 'organization.timing', 'staffDetail'])
+            ->visibleTo($viewer)
+            ->where('employee_id', $userId)
+            ->first();
+
+        if (! $user) {
+            return ['response' => response()->json([
+                'status' => false,
+                'message' => 'User not found',
+            ], 404)];
+        }
+
+        $month = isset($validated['month'])
+            ? Carbon::createFromFormat('Y-m', $validated['month'])
+            : Carbon::today();
+
+        $startDate = $month->copy()->startOfMonth();
+        $endDate = $month->copy()->endOfMonth();
+
+        if ($endDate->isFuture()) {
+            $endDate = Carbon::today();
+        }
+
+        $attendances = Attendance::with('user')
+            ->where('user_id', $user->id)
+            ->whereBetween('attendance_date', [
+                $startDate->toDateString(),
+                $endDate->toDateString(),
+            ])
+            ->get()
+            ->keyBy(fn (Attendance $attendance) => Carbon::parse($attendance->attendance_date)->toDateString());
+
+        $data = collect();
+        $timing = $user->organization?->timing ?? OrganizationTiming::defaultTiming();
+        $leaveSummary = $this->leaveSummary($user, $startDate, $endDate);
+
+        for ($date = $endDate->copy(); $date->gte($startDate); $date->subDay()) {
+            if ($date->isWeekend()) {
+                continue;
+            }
+
+            $dateString = $date->toDateString();
+            $record = $attendances->get($dateString) ?? [
+                'id' => null,
+                'user_id' => $user->id,
+                'attendance_date' => $dateString,
+                'check_in' => null,
+                'check_out' => null,
+                'status' => AttendanceStatus::Absent->value,
+                'remark' => null,
+                'created_at' => null,
+                'updated_at' => null,
+                'user' => $user,
+            ];
+
+            $data->push($this->withLateSalaryCut($record, $user, $timing));
+        }
+
+        $totalSalaryCut = round($data->sum('salary_cut'), 2);
+
+        return [
+            'month' => $month->format('Y-m'),
+            'employee' => $this->employeeDetail($user),
+            'summary' => [
+                'total_late_seconds' => $data->sum('late_seconds'),
+                'total_late_minutes' => $data->sum('late_minutes'),
+                'total_late_duration' => $this->formatDuration($data->sum('late_seconds')),
+                'total_salary_cut' => $totalSalaryCut,
+                'payable_salary' => $this->payableSalary($user, $startDate, $totalSalaryCut),
+                'leave_days' => $leaveSummary['leave_days'],
+                'annual_leave_taken' => $leaveSummary['annual_leave_taken'],
+                'annual_leave_limit' => $leaveSummary['annual_leave_limit'],
+                'annual_leave_remaining' => $leaveSummary['annual_leave_remaining'],
+            ],
+            'data' => $data,
+        ];
+    }
+
+    private function csvDownload(string $filename, array $headers, $rows)
+    {
+        return response()->streamDownload(function () use ($headers, $rows) {
+            $output = fopen('php://output', 'w');
+
+            if ($headers !== []) {
+                fputcsv($output, $headers);
+            }
+
+            foreach ($rows as $row) {
+                fputcsv($output, $row);
+            }
+
+            fclose($output);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    private function employeeName($user): ?string
+    {
+        $name = trim((string) data_get($user, 'first_name').' '.(string) data_get($user, 'last_name'));
+
+        return $name !== '' ? $name : data_get($user, 'name');
     }
 
     private function visibleAttendanceQuery(?UserModel $viewer): Builder
@@ -654,6 +810,24 @@ class AttendanceController extends Controller
             'yearly' => $salary / ($date->daysInYear * $workingMinutes),
             default => $salary / ($date->daysInMonth * $workingMinutes),
         };
+    }
+
+    private function payableSalary(UserModel $user, Carbon $month, float $salaryCut): float
+    {
+        $salary = $user->staffDetail?->salary;
+
+        if (! $salary || $salary <= 0) {
+            return 0;
+        }
+
+        $monthlySalary = match ($user->staffDetail?->salary_frequency) {
+            'daily' => $salary * $month->daysInMonth,
+            'weekly' => ($salary / 7) * $month->daysInMonth,
+            'yearly' => ($salary / $month->daysInYear) * $month->daysInMonth,
+            default => $salary,
+        };
+
+        return round(max(0, $monthlySalary - $salaryCut), 2);
     }
 
     private function salaryPerWorkingDay(UserModel $user, Carbon $date): float
