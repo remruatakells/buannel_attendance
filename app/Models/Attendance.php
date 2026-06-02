@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\AttendanceStatus;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
@@ -15,7 +16,15 @@ class Attendance extends Model
         'check_in',
         'check_out',
         'status',
+        'remark',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'status' => AttendanceStatus::class,
+        ];
+    }
 
     protected function checkIn(): Attribute
     {

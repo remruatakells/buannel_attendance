@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\UserModel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Log;
 
@@ -18,12 +19,16 @@ class UserController extends Controller
             return $this->viewerNotFoundResponse();
         }
 
+        $users = UserModel::with(['organization', 'staffDetail'])
+            ->visibleTo($viewer)
+            ->orderBy('employee_id')
+            ->get();
+
+        $users->each(fn (UserModel $user) => $this->applySalaryVisibility($request, $user));
+
         return response()->json([
             'status' => true,
-            'data' => UserModel::with('organization')
-                ->visibleTo($viewer)
-                ->orderBy('employee_id')
-                ->get(),
+            'data' => $users,
         ]);
     }
 
@@ -53,6 +58,8 @@ class UserController extends Controller
 
         $user = UserModel::create($this->userData($validated))->load('organization');
 
+        $this->applySalaryVisibility($request, $user);
+
         return response()->json([
             'status' => true,
             'message' => 'User created',
@@ -66,9 +73,13 @@ class UserController extends Controller
             return $this->userNotFoundResponse();
         }
 
+        $user->load(['organization', 'attendances', 'staffDetail']);
+
+        $this->applySalaryVisibility($request, $user);
+
         return response()->json([
             'status' => true,
-            'data' => $user->load(['organization', 'attendances']),
+            'data' => $user,
         ]);
     }
 
@@ -88,16 +99,36 @@ class UserController extends Controller
             'device_id' => ['sometimes', 'nullable', 'string', 'max:255'],
             'profile_image' => ['sometimes', 'nullable', 'url', 'max:2048'],
             'organization_id' => ['sometimes', 'integer', 'exists:organizations,id'],
+            'staff_detail' => ['sometimes', 'array'],
+            'staff_detail.position' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'staff_detail.department' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'staff_detail.join_date' => ['sometimes', 'nullable', 'date'],
+            'staff_detail.salary' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'staff_detail.salary_currency' => ['sometimes', 'nullable', 'string', 'size:3'],
+            'staff_detail.salary_frequency' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'staff_detail.notes' => ['sometimes', 'nullable', 'string'],
         ]);
 
         $viewer = $this->viewerFromRequest($request);
+        $staffDetail = $validated['staff_detail'] ?? null;
+        unset($validated['staff_detail']);
 
         if ($viewer && isset($validated['organization_id']) && (int) $validated['organization_id'] !== $viewer->organization_id) {
             return $this->organizationNotAllowedResponse();
         }
 
         $user->update($this->userData($validated, $user));
-        $user->load('organization');
+
+        if (is_array($staffDetail)) {
+            $user->staffDetail()->updateOrCreate(
+                ['user_id' => $user->id],
+                $this->staffDetailData($staffDetail),
+            );
+        }
+
+        $user->load(['organization', 'staffDetail']);
+
+        $this->applySalaryVisibility($request, $user);
 
         return response()->json([
             'status' => true,
@@ -142,13 +173,16 @@ class UserController extends Controller
             }
 
             // 🚫 Not admin
-            if (!$user->is_admin) {
+            if (! $user->is_admin) {
                 return response()->json([
                     'status' => false,
                     'title' => 'Access Denied',
                     'message' => 'User is not admin',
                 ], 403);
             }
+
+            $user->admin_access_token = Str::random(60);
+            $user->save();
 
             // ✅ Success
             return response()->json([
@@ -162,6 +196,7 @@ class UserController extends Controller
                     'phone_no' => $user->phone_no,
                     'isAdmin' => $user->is_admin,
                     'organization_id' => $user->organization_id,
+                    'access_token' => $user->admin_access_token,
                     'organization' => $user->organization ? [
                         'id' => $user->organization->id,
                         'name' => $user->organization->name,
@@ -225,6 +260,27 @@ class UserController extends Controller
         return $payload;
     }
 
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function staffDetailData(array $data): array
+    {
+        $payload = $data;
+
+        foreach (['position', 'department', 'join_date', 'salary_currency', 'salary_frequency', 'notes'] as $field) {
+            if (array_key_exists($field, $payload) && $payload[$field] === '') {
+                $payload[$field] = null;
+            }
+        }
+
+        if (array_key_exists('salary', $payload) && $payload['salary'] === '') {
+            $payload['salary'] = null;
+        }
+
+        return $payload;
+    }
+
     private function viewerCanAccessUser(Request $request, UserModel $user): bool
     {
         $viewer = $this->viewerFromRequest($request);
@@ -240,11 +296,36 @@ class UserController extends Controller
         return $user->organization_id === $viewer->organization_id;
     }
 
+    private function applySalaryVisibility(Request $request, UserModel $user): void
+    {
+        if (! $user->staffDetail) {
+            return;
+        }
+
+        $viewer = $this->viewerFromRequest($request);
+
+        if ($viewer && $viewer->is_admin && $viewer->organization_id === $user->organization_id) {
+            $user->staffDetail->makeVisible('salary');
+
+            return;
+        }
+
+        if ($viewer && $viewer->id === $user->id) {
+            $user->staffDetail->makeVisible('salary');
+        }
+    }
+
     private function viewerFromRequest(Request $request): ?UserModel
     {
+        $admin = $request->attributes->get('admin_user');
+
+        if ($admin instanceof UserModel) {
+            return $admin;
+        }
+
         $employeeId = $this->viewerIdentifier($request);
 
-        if (!$employeeId) {
+        if (! $employeeId) {
             return null;
         }
 

@@ -30,6 +30,72 @@ class OrganizationApiTest extends TestCase
             ->assertJsonPath('data.1.name', 'Mizoram University');
     }
 
+    public function test_authenticated_admin_only_lists_own_organization(): void
+    {
+        $buannel = Organization::factory()->create([
+            'name' => 'Buannel',
+            'type' => 'company',
+        ]);
+        Organization::factory()->create([
+            'name' => 'Mizoram University',
+            'type' => 'university',
+        ]);
+        $admin = UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'admin_access_token' => 'admin-token',
+            'organization_id' => $buannel->id,
+        ]);
+
+        $this->getJson('/api/attendance/organizations', [
+            'X-Admin-Access-Token' => $admin->admin_access_token,
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', true)
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $buannel->id)
+            ->assertJsonPath('data.0.name', 'Buannel');
+    }
+
+    public function test_authenticated_admin_cannot_read_another_organization(): void
+    {
+        $buannel = Organization::factory()->create();
+        $otherOrganization = Organization::factory()->create();
+        $admin = UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'admin_access_token' => 'admin-token',
+            'organization_id' => $buannel->id,
+        ]);
+
+        $this->getJson("/api/attendance/organizations/{$otherOrganization->id}", [
+            'X-Admin-Access-Token' => $admin->admin_access_token,
+        ])
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Organization not found');
+    }
+
+    public function test_authenticated_admin_cannot_read_another_organizations_timing_or_policy(): void
+    {
+        $buannel = Organization::factory()->create();
+        $otherOrganization = Organization::factory()->create();
+        $admin = UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'admin_access_token' => 'admin-token',
+            'organization_id' => $buannel->id,
+        ]);
+        $headers = ['X-Admin-Access-Token' => $admin->admin_access_token];
+
+        $this->getJson("/api/attendance/organizations/{$otherOrganization->id}/timing", $headers)
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Organization not found');
+
+        $this->getJson("/api/attendance/organizations/{$otherOrganization->id}/attendance-policy", $headers)
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Organization not found');
+    }
+
     public function test_organization_can_be_created(): void
     {
         $this->postJson('/api/organizations', [
@@ -44,7 +110,11 @@ class OrganizationApiTest extends TestCase
             ->assertJsonPath('data.timing.check_in_start', '09:00:00')
             ->assertJsonPath('data.timing.check_in_end', '10:00:00')
             ->assertJsonPath('data.timing.late_after', '09:30:00')
-            ->assertJsonPath('data.timing.check_out_start', '16:00:00');
+            ->assertJsonPath('data.timing.half_day_after', '13:00:00')
+            ->assertJsonPath('data.timing.check_out_start', '16:00:00')
+            ->assertJsonPath('data.attendance_policy.allow_half_day', true)
+            ->assertJsonPath('data.attendance_policy.allow_leave', true)
+            ->assertJsonPath('data.attendance_policy.annual_leave_limit', 0);
 
         $this->assertDatabaseHas('organizations', [
             'name' => 'Buannel',
@@ -55,7 +125,14 @@ class OrganizationApiTest extends TestCase
             'check_in_start' => '09:00:00',
             'check_in_end' => '10:00:00',
             'late_after' => '09:30:00',
+            'half_day_after' => '13:00:00',
             'check_out_start' => '16:00:00',
+        ]);
+
+        $this->assertDatabaseHas('organization_attendance_policies', [
+            'allow_half_day' => true,
+            'allow_leave' => true,
+            'annual_leave_limit' => 0,
         ]);
     }
 
@@ -123,6 +200,7 @@ class OrganizationApiTest extends TestCase
             'check_in_start' => '10:00:00',
             'check_in_end' => '11:00:00',
             'late_after' => '10:30:00',
+            'half_day_after' => '14:00:00',
             'check_out_start' => '17:00:00',
         ])
             ->assertOk()
@@ -131,6 +209,7 @@ class OrganizationApiTest extends TestCase
             ->assertJsonPath('data.check_in_start', '10:00:00')
             ->assertJsonPath('data.check_in_end', '11:00:00')
             ->assertJsonPath('data.late_after', '10:30:00')
+            ->assertJsonPath('data.half_day_after', '14:00:00')
             ->assertJsonPath('data.check_out_start', '17:00:00');
 
         $this->assertDatabaseHas('organization_timings', [
@@ -138,7 +217,26 @@ class OrganizationApiTest extends TestCase
             'check_in_start' => '10:00:00',
             'check_in_end' => '11:00:00',
             'late_after' => '10:30:00',
+            'half_day_after' => '14:00:00',
             'check_out_start' => '17:00:00',
+        ]);
+
+        $this->patchJson("/api/attendance/organizations/{$organization->id}/attendance-policy", [
+            'allow_half_day' => false,
+            'allow_leave' => true,
+            'annual_leave_limit' => 2,
+        ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Organization attendance policy updated')
+            ->assertJsonPath('data.allow_half_day', false)
+            ->assertJsonPath('data.allow_leave', true)
+            ->assertJsonPath('data.annual_leave_limit', 2);
+
+        $this->assertDatabaseHas('organization_attendance_policies', [
+            'organization_id' => $organization->id,
+            'allow_half_day' => false,
+            'allow_leave' => true,
+            'annual_leave_limit' => 2,
         ]);
     }
 

@@ -31,4 +31,9 @@ class Organization extends Model
     {
         return $this->hasOne(OrganizationTiming::class);
     }
+
+    public function attendancePolicy(): HasOne
+    {
+        return $this->hasOne(OrganizationAttendancePolicy::class);
+    }
 }

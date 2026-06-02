@@ -4,13 +4,18 @@ namespace App\Http\Controllers;
 
 use App\Models\Organization;
 use App\Models\OrganizationTiming;
+use App\Models\UserModel;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 class OrganizationTimingController extends Controller
 {
-    public function show(Organization $organization)
+    public function show(Request $request, Organization $organization)
     {
+        if (! $this->viewerCanAccessOrganization($request, $organization)) {
+            return $this->organizationNotFoundResponse();
+        }
+
         return response()->json([
             'status' => true,
             'data' => $organization->timing ?? $this->defaultTimingFor($organization),
@@ -19,10 +24,15 @@ class OrganizationTimingController extends Controller
 
     public function update(Request $request, Organization $organization)
     {
+        if (! $this->viewerCanAccessOrganization($request, $organization)) {
+            return $this->organizationNotFoundResponse();
+        }
+
         $validated = $request->validate([
             'check_in_start' => ['sometimes', 'date_format:H:i:s'],
             'check_in_end' => ['sometimes', 'date_format:H:i:s'],
             'late_after' => ['sometimes', 'date_format:H:i:s'],
+            'half_day_after' => ['sometimes', 'date_format:H:i:s'],
             'check_out_start' => ['sometimes', 'date_format:H:i:s'],
         ]);
 
@@ -31,6 +41,7 @@ class OrganizationTimingController extends Controller
             'check_in_start',
             'check_in_end',
             'late_after',
+            'half_day_after',
             'check_out_start',
         ]), $validated);
 
@@ -57,7 +68,7 @@ class OrganizationTimingController extends Controller
     }
 
     /**
-     * @param  array<string, string>  $payload
+     * @param  array<string, bool|int|string>  $payload
      */
     private function validateTimingOrder(array $payload): void
     {
@@ -72,5 +83,43 @@ class OrganizationTimingController extends Controller
                 'late_after' => 'Late time must be before or equal to check-in end time.',
             ]);
         }
+
+        if ($payload['half_day_after'] < $payload['check_in_end']) {
+            throw ValidationException::withMessages([
+                'half_day_after' => 'Half-day time must be after or equal to check-in end time.',
+            ]);
+        }
+
+        if ($payload['half_day_after'] > $payload['check_out_start']) {
+            throw ValidationException::withMessages([
+                'half_day_after' => 'Half-day time must be before or equal to check-out start time.',
+            ]);
+        }
+    }
+
+    private function viewerCanAccessOrganization(Request $request, Organization $organization): bool
+    {
+        $viewer = $this->viewerFromRequest($request);
+
+        if (! $viewer) {
+            return true;
+        }
+
+        return $organization->id === $viewer->organization_id;
+    }
+
+    private function viewerFromRequest(Request $request): ?UserModel
+    {
+        $admin = $request->attributes->get('admin_user');
+
+        return $admin instanceof UserModel ? $admin : null;
+    }
+
+    private function organizationNotFoundResponse()
+    {
+        return response()->json([
+            'status' => false,
+            'message' => 'Organization not found',
+        ], 404);
     }
 }

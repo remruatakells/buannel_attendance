@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\AttendanceStatus;
 use App\Models\Attendance;
+use App\Models\OrganizationAttendancePolicy;
 use App\Models\OrganizationTiming;
 use App\Models\UserModel;
 use Carbon\Carbon;
@@ -21,7 +23,7 @@ class AttendanceController extends Controller
         $today = Carbon::today()->toDateString();
         $now = Carbon::now();
         $time = $now->format('H:i:s');
-        $user = UserModel::with('organization.timing')
+        $user = UserModel::with(['organization.timing', 'organization.attendancePolicy', 'staffDetail'])
             ->where('employee_id', $validated['user_id'])
             ->first();
 
@@ -43,7 +45,11 @@ class AttendanceController extends Controller
                 'status' => false,
                 'message' => 'Already checked out today',
                 'action' => 'completed',
-                'data' => $attendance->load('user'),
+                'data' => $this->withLateSalaryCut(
+                    $attendance->load('user.organization.timing', 'user.staffDetail'),
+                    $user,
+                    $timing
+                ),
             ], 409);
         }
 
@@ -65,14 +71,14 @@ class AttendanceController extends Controller
                 'user_id' => $user->id,
                 'attendance_date' => $today,
                 'check_in' => $time,
-                'status' => $now->gt($lateAfter) ? 'late' : 'present',
-            ])->load('user');
+                'status' => $now->gt($lateAfter) ? AttendanceStatus::Late : AttendanceStatus::Present,
+            ])->load('user.organization.timing', 'user.staffDetail');
 
             return response()->json([
                 'status' => true,
                 'message' => 'Check-in successful',
                 'action' => 'check_in',
-                'data' => $attendance,
+                'data' => $this->withLateSalaryCut($attendance, $user, $timing),
             ]);
         }
 
@@ -83,20 +89,24 @@ class AttendanceController extends Controller
                 'status' => false,
                 'message' => 'Check-out is allowed from '.$checkOutStart->format('h:i A'),
                 'action' => 'check_out_closed',
-                'data' => $attendance->load('user'),
+                'data' => $this->withLateSalaryCut(
+                    $attendance->load('user.organization.timing', 'user.staffDetail'),
+                    $user,
+                    $timing
+                ),
             ], 409);
         }
 
         $attendance->update([
             'check_out' => $time,
         ]);
-        $attendance->load('user');
+        $attendance->load('user.organization.timing', 'user.staffDetail');
 
         return response()->json([
             'status' => true,
             'message' => 'Check-out successful',
             'action' => 'check_out',
-            'data' => $attendance,
+            'data' => $this->withLateSalaryCut($attendance, $user, $timing),
         ]);
     }
 
@@ -111,7 +121,12 @@ class AttendanceController extends Controller
         $data = $this->visibleAttendanceQuery($viewer)
             ->whereDate('attendance_date', Carbon::today())
             ->orderByDesc('id')
-            ->get();
+            ->get()
+            ->map(fn (Attendance $attendance) => $this->withLateSalaryCut(
+                $attendance,
+                $attendance->user,
+                $attendance->user->organization?->timing ?? OrganizationTiming::defaultTiming()
+            ));
 
         return response()->json([
             'status' => true,
@@ -145,13 +160,79 @@ class AttendanceController extends Controller
         $data = $query
             ->orderByDesc('attendance_date')
             ->orderByDesc('id')
-            ->get();
+            ->get()
+            ->map(fn (Attendance $attendance) => $this->withLateSalaryCut(
+                $attendance,
+                $attendance->user,
+                $attendance->user->organization?->timing ?? OrganizationTiming::defaultTiming()
+            ));
 
         return response()->json([
             'status' => true,
             'month' => $validated['month'] ?? null,
             'data' => $data,
         ]);
+    }
+
+    public function storeAdmin(Request $request)
+    {
+        $viewer = $this->viewerFromRequest($request);
+
+        if ($this->viewerWasRequested($request) && ! $viewer) {
+            return $this->viewerNotFoundResponse();
+        }
+
+        $validated = $request->validate([
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+            'attendance_date' => ['required', 'date'],
+            'check_in' => ['sometimes', 'nullable', 'date_format:h:i:s A'],
+            'check_out' => ['sometimes', 'nullable', 'date_format:h:i:s A'],
+            'status' => ['required', Rule::enum(AttendanceStatus::class)],
+            'remark' => ['sometimes', 'nullable', 'string', 'max:1000'],
+        ]);
+
+        $user = UserModel::visibleTo($viewer)->find($validated['user_id']);
+
+        if (! $user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'User not found',
+            ], 404);
+        }
+
+        $policyResponse = $this->attendancePolicyViolation(
+            $user->loadMissing('organization.attendancePolicy'),
+            AttendanceStatus::from($validated['status']),
+            Carbon::parse($validated['attendance_date'])
+        );
+
+        if ($policyResponse) {
+            return $policyResponse;
+        }
+
+        $exists = Attendance::where('user_id', $user->id)
+            ->whereDate('attendance_date', $validated['attendance_date'])
+            ->exists();
+
+        if ($exists) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Attendance already exists for this date',
+            ], 409);
+        }
+
+        $attendance = Attendance::create($validated)
+            ->load('user.organization.timing', 'user.staffDetail');
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Attendance created',
+            'data' => $this->withLateSalaryCut(
+                $attendance,
+                $attendance->user,
+                $attendance->user->organization?->timing ?? OrganizationTiming::defaultTiming()
+            ),
+        ], 201);
     }
 
     public function userAttendance(Request $request, $userId)
@@ -166,7 +247,8 @@ class AttendanceController extends Controller
             return $this->viewerNotFoundResponse();
         }
 
-        $user = UserModel::visibleTo($viewer)
+        $user = UserModel::with(['organization.attendancePolicy', 'organization.timing', 'staffDetail'])
+            ->visibleTo($viewer)
             ->where('employee_id', $userId)
             ->first();
 
@@ -198,26 +280,46 @@ class AttendanceController extends Controller
             ->keyBy(fn (Attendance $attendance) => Carbon::parse($attendance->attendance_date)->toDateString());
 
         $data = collect();
+        $timing = $user->organization?->timing ?? OrganizationTiming::defaultTiming();
+        $leaveSummary = $this->leaveSummary($user, $startDate, $endDate);
 
         for ($date = $endDate->copy(); $date->gte($startDate); $date->subDay()) {
+            if ($date->isWeekend()) {
+                continue;
+            }
+
             $dateString = $date->toDateString();
 
-            $data->push($attendances->get($dateString) ?? [
+            $record = $attendances->get($dateString) ?? [
                 'id' => null,
                 'user_id' => $user->id,
                 'attendance_date' => $dateString,
                 'check_in' => null,
                 'check_out' => null,
-                'status' => 'absent',
+                'status' => AttendanceStatus::Absent->value,
+                'remark' => null,
                 'created_at' => null,
                 'updated_at' => null,
                 'user' => $user,
-            ]);
+            ];
+
+            $data->push($this->withLateSalaryCut($record, $user, $timing));
         }
 
         return response()->json([
             'status' => true,
             'month' => $month->format('Y-m'),
+            'employee' => $this->employeeDetail($user),
+            'summary' => [
+                'total_late_seconds' => $data->sum('late_seconds'),
+                'total_late_minutes' => $data->sum('late_minutes'),
+                'total_late_duration' => $this->formatDuration($data->sum('late_seconds')),
+                'total_salary_cut' => round($data->sum('salary_cut'), 2),
+                'leave_days' => $leaveSummary['leave_days'],
+                'annual_leave_taken' => $leaveSummary['annual_leave_taken'],
+                'annual_leave_limit' => $leaveSummary['annual_leave_limit'],
+                'annual_leave_remaining' => $leaveSummary['annual_leave_remaining'],
+            ],
             'data' => $data,
         ]);
     }
@@ -243,15 +345,36 @@ class AttendanceController extends Controller
             'attendance_date' => 'sometimes|date',
             'check_in' => ['sometimes', 'nullable', 'date_format:h:i:s A'],
             'check_out' => ['sometimes', 'nullable', 'date_format:h:i:s A'],
-            'status' => ['sometimes', 'string', Rule::in(['present', 'absent', 'late', 'half_day'])],
+            'status' => ['sometimes', Rule::enum(AttendanceStatus::class)],
+            'remark' => ['sometimes', 'nullable', 'string', 'max:1000'],
         ]);
 
+        $status = isset($validated['status'])
+            ? AttendanceStatus::from($validated['status'])
+            : $attendance->status;
+        $attendanceDate = Carbon::parse($validated['attendance_date'] ?? $attendance->attendance_date);
+        $policyResponse = $this->attendancePolicyViolation(
+            $attendance->user->loadMissing('organization.attendancePolicy'),
+            $status,
+            $attendanceDate,
+            $attendance->id
+        );
+
+        if ($policyResponse) {
+            return $policyResponse;
+        }
+
         $attendance->update($validated);
+        $attendance->load('user.organization.timing', 'user.staffDetail');
 
         return response()->json([
             'status' => true,
             'message' => 'Attendance updated',
-            'data' => $attendance,
+            'data' => $this->withLateSalaryCut(
+                $attendance,
+                $attendance->user,
+                $attendance->user->organization?->timing ?? OrganizationTiming::defaultTiming()
+            ),
         ]);
     }
 
@@ -282,8 +405,271 @@ class AttendanceController extends Controller
 
     private function visibleAttendanceQuery(?UserModel $viewer): Builder
     {
-        return Attendance::with('user.organization')
+        return Attendance::with([
+            'user.organization.timing',
+            'user.organization.attendancePolicy',
+            'user.staffDetail',
+        ])
             ->whereHas('user', fn (Builder $query) => $query->visibleTo($viewer));
+    }
+
+    private function attendancePolicyViolation(
+        UserModel $user,
+        AttendanceStatus $status,
+        Carbon $attendanceDate,
+        ?int $ignoreAttendanceId = null
+    ) {
+        $policy = $user->organization?->attendancePolicy
+            ?? OrganizationAttendancePolicy::defaultPolicy();
+
+        if ($status === AttendanceStatus::HalfDay && ! $policy->allow_half_day) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Half-day attendance is disabled for this organization',
+            ], 422);
+        }
+
+        if ($status !== AttendanceStatus::Leave) {
+            return null;
+        }
+
+        if (! $policy->allow_leave) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Leave attendance is disabled for this organization',
+            ], 422);
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array{leave_days: int, annual_leave_taken: int, annual_leave_limit: int, annual_leave_remaining: int|null}
+     */
+    private function leaveSummary(UserModel $user, Carbon $startDate, Carbon $endDate): array
+    {
+        $policy = $user->organization?->attendancePolicy
+            ?? OrganizationAttendancePolicy::defaultPolicy();
+
+        $yearStart = $startDate->copy()->startOfYear();
+        $yearEnd = $startDate->copy()->endOfYear();
+
+        $leaveDays = Attendance::where('user_id', $user->id)
+            ->where('status', AttendanceStatus::Leave->value)
+            ->whereBetween('attendance_date', [
+                $startDate->toDateString(),
+                $endDate->toDateString(),
+            ])
+            ->count();
+
+        $annualLeaveTaken = Attendance::where('user_id', $user->id)
+            ->where('status', AttendanceStatus::Leave->value)
+            ->whereBetween('attendance_date', [
+                $yearStart->toDateString(),
+                $yearEnd->toDateString(),
+            ])
+            ->count();
+
+        $annualLeaveRemaining = $policy->annual_leave_limit > 0
+            ? max(0, $policy->annual_leave_limit - $annualLeaveTaken)
+            : null;
+
+        return [
+            'leave_days' => $leaveDays,
+            'annual_leave_taken' => $annualLeaveTaken,
+            'annual_leave_limit' => $policy->annual_leave_limit,
+            'annual_leave_remaining' => $annualLeaveRemaining,
+        ];
+    }
+
+    private function withLateSalaryCut($record, UserModel $user, OrganizationTiming $timing)
+    {
+        $attendanceDate = Carbon::parse(data_get($record, 'attendance_date'));
+        $checkIn = data_get($record, 'check_in');
+        $lateSeconds = $this->lateSeconds($attendanceDate, $checkIn, $timing);
+        $lateMinutes = (int) floor($lateSeconds / 60);
+        $salaryCut = $this->salaryCut($record, $user, $timing, $attendanceDate, $lateMinutes);
+
+        data_set($record, 'late_seconds', $lateSeconds);
+        data_set($record, 'late_minutes', $lateMinutes);
+        data_set($record, 'late_duration', $this->formatDuration($lateSeconds));
+        data_set($record, 'salary_cut', round($salaryCut, 2));
+        data_set($record, 'detail', $this->attendanceDetail($record, $user, $timing, $lateSeconds, $salaryCut));
+
+        if ($this->attendanceStatusValue($record) === AttendanceStatus::Leave->value) {
+            $unpaidLeave = $this->isUnpaidLeave($record, $user, $attendanceDate);
+
+            data_set($record, 'unpaid_leave', $unpaidLeave);
+            data_set($record, 'salary_cut_applied', $unpaidLeave);
+            data_set($record, 'paid_leave', ! $unpaidLeave);
+        }
+
+        return $record;
+    }
+
+    private function employeeDetail(UserModel $user): array
+    {
+        return [
+            'id' => $user->id,
+            'employee_id' => $user->employee_id,
+            'name' => $user->name,
+            'first_name' => $user->first_name,
+            'last_name' => $user->last_name,
+            'phone_no' => $user->phone_no,
+            'device_id' => $user->device_id,
+            'is_admin' => $user->is_admin,
+            'profile_image' => $user->profile_image,
+            'organization' => $user->organization,
+            'staff_detail' => $user->staffDetail,
+        ];
+    }
+
+    private function attendanceDetail($record, UserModel $user, OrganizationTiming $timing, int $lateSeconds, float $salaryCut): array
+    {
+        $attendanceDate = Carbon::parse(data_get($record, 'attendance_date'));
+        $checkIn = data_get($record, 'check_in');
+        $checkOut = data_get($record, 'check_out');
+        $checkInAt = $checkIn ? $this->timeToday($attendanceDate, $checkIn) : null;
+        $checkOutAt = $checkOut ? $this->timeToday($attendanceDate, $checkOut) : null;
+        $workedSeconds = $checkInAt && $checkOutAt
+            ? max(0, (int) $checkInAt->diffInSeconds($checkOutAt))
+            : 0;
+
+        return [
+            'employee' => $this->employeeDetail($user),
+            'date' => [
+                'value' => $attendanceDate->toDateString(),
+                'day_name' => $attendanceDate->format('l'),
+                'is_weekend' => $attendanceDate->isWeekend(),
+            ],
+            'timing' => [
+                'check_in_start' => $this->timeToday($attendanceDate, $timing->check_in_start)->format('h:i:s A'),
+                'check_in_end' => $this->timeToday($attendanceDate, $timing->check_in_end)->format('h:i:s A'),
+                'late_after' => $this->timeToday($attendanceDate, $timing->late_after)->format('h:i:s A'),
+                'check_out_start' => $this->timeToday($attendanceDate, $timing->check_out_start)->format('h:i:s A'),
+            ],
+            'check_in_at' => $checkInAt?->toDateTimeString(),
+            'check_out_at' => $checkOutAt?->toDateTimeString(),
+            'worked_seconds' => $workedSeconds,
+            'worked_minutes' => (int) floor($workedSeconds / 60),
+            'worked_duration' => $this->formatDuration($workedSeconds),
+            'late_seconds' => $lateSeconds,
+            'late_minutes' => (int) floor($lateSeconds / 60),
+            'late_duration' => $this->formatDuration($lateSeconds),
+            'salary_cut' => round($salaryCut, 2),
+        ];
+    }
+
+    private function salaryCut($record, UserModel $user, OrganizationTiming $timing, Carbon $date, int $lateMinutes): float
+    {
+        if ($this->attendanceStatusValue($record) === AttendanceStatus::Absent->value) {
+            return $this->salaryPerWorkingDay($user, $date);
+        }
+
+        if (
+            $this->attendanceStatusValue($record) === AttendanceStatus::Leave->value
+            && $this->isUnpaidLeave($record, $user, $date)
+        ) {
+            return $this->salaryPerWorkingDay($user, $date);
+        }
+
+        return $lateMinutes * $this->salaryPerWorkingMinute($user, $timing, $date);
+    }
+
+    private function isUnpaidLeave($record, UserModel $user, Carbon $date): bool
+    {
+        $policy = $user->organization?->attendancePolicy
+            ?? OrganizationAttendancePolicy::defaultPolicy();
+
+        if ($policy->annual_leave_limit <= 0) {
+            return false;
+        }
+
+        $leaveNumberForYear = Attendance::where('user_id', $user->id)
+            ->where('status', AttendanceStatus::Leave->value)
+            ->whereBetween('attendance_date', [
+                $date->copy()->startOfYear()->toDateString(),
+                $date->toDateString(),
+            ])
+            ->when(
+                data_get($record, 'id'),
+                fn (Builder $query, int $id) => $query
+                    ->where(fn (Builder $query) => $query
+                        ->where('attendance_date', '<', $date->toDateString())
+                        ->orWhere(fn (Builder $query) => $query
+                            ->whereDate('attendance_date', $date->toDateString())
+                            ->whereKey($id)))
+            )
+            ->count();
+
+        return $leaveNumberForYear > $policy->annual_leave_limit;
+    }
+
+    private function attendanceStatusValue($record): ?string
+    {
+        $status = data_get($record, 'status');
+
+        return $status instanceof AttendanceStatus ? $status->value : $status;
+    }
+
+    private function lateSeconds(Carbon $date, ?string $checkIn, OrganizationTiming $timing): int
+    {
+        if (! $checkIn) {
+            return 0;
+        }
+
+        $lateAfter = $this->timeToday($date, $timing->late_after);
+        $checkedInAt = $this->timeToday($date, $checkIn);
+
+        if ($checkedInAt->lte($lateAfter)) {
+            return 0;
+        }
+
+        return (int) $lateAfter->diffInSeconds($checkedInAt);
+    }
+
+    private function formatDuration(int $seconds): string
+    {
+        $hours = intdiv($seconds, 3600);
+        $minutes = intdiv($seconds % 3600, 60);
+        $remainingSeconds = $seconds % 60;
+
+        return sprintf('%02d:%02d:%02d', $hours, $minutes, $remainingSeconds);
+    }
+
+    private function salaryPerWorkingMinute(UserModel $user, OrganizationTiming $timing, Carbon $date): float
+    {
+        $salary = $user->staffDetail?->salary;
+
+        if (! $salary || $salary <= 0) {
+            return 0;
+        }
+
+        $workingMinutes = max(1, $this->timeToday($date, $timing->check_in_start)
+            ->diffInMinutes($this->timeToday($date, $timing->check_out_start)));
+
+        return match ($user->staffDetail?->salary_frequency) {
+            'daily' => $salary / $workingMinutes,
+            'weekly' => $salary / (7 * $workingMinutes),
+            'yearly' => $salary / ($date->daysInYear * $workingMinutes),
+            default => $salary / ($date->daysInMonth * $workingMinutes),
+        };
+    }
+
+    private function salaryPerWorkingDay(UserModel $user, Carbon $date): float
+    {
+        $salary = $user->staffDetail?->salary;
+
+        if (! $salary || $salary <= 0) {
+            return 0;
+        }
+
+        return match ($user->staffDetail?->salary_frequency) {
+            'daily' => $salary,
+            'weekly' => $salary / 7,
+            'yearly' => $salary / $date->daysInYear,
+            default => $salary / $date->daysInMonth,
+        };
     }
 
     private function timeToday(Carbon $date, string $time): Carbon
@@ -293,6 +679,12 @@ class AttendanceController extends Controller
 
     private function viewerFromRequest(Request $request): ?UserModel
     {
+        $admin = $request->attributes->get('admin_user');
+
+        if ($admin instanceof UserModel) {
+            return $admin;
+        }
+
         $employeeId = $this->viewerIdentifier($request);
 
         if (! $employeeId) {

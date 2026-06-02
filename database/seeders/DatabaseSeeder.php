@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\Organization;
+use App\Models\OrganizationAttendancePolicy;
 use App\Models\OrganizationTiming;
 use App\Models\UserModel;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
@@ -25,21 +26,25 @@ class DatabaseSeeder extends Seeder
             ['type' => 'company'],
         );
         $organization->timing()->firstOrCreate([], OrganizationTiming::defaults());
+        $organization->attendancePolicy()->firstOrCreate([], OrganizationAttendancePolicy::defaults());
 
-        UserModel::factory()->create([
-            'employee_id' => 'ADMIN001',
-            'first_name' => 'Test',
-            'last_name' => 'User',
-            'phone_no' => '9999999999',
-            'password' => Hash::make('password'),
-            'is_admin' => true,
-            'device_id' => null,
-            'organization_id' => $organization->id,
-            'name' => 'Test User',
-        ]);
+        UserModel::updateOrCreate(
+            ['employee_id' => 'ADMIN001'],
+            [
+                'first_name' => 'Test',
+                'last_name' => 'User',
+                'phone_no' => '9999999999',
+                'password' => Hash::make('password'),
+                'is_admin' => true,
+                'device_id' => null,
+                'organization_id' => $organization->id,
+                'name' => 'Test User',
+            ],
+        );
 
         $this->call([
             AttendanceSeeder::class,
+            StaffDetailSeeder::class,
         ]);
     }
 }

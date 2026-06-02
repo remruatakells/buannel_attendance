@@ -3,9 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\Organization;
+use App\Models\StaffDetail;
 use App\Models\UserModel;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class UserApiTest extends TestCase
@@ -243,5 +245,102 @@ class UserApiTest extends TestCase
             ->assertForbidden()
             ->assertJsonPath('status', false)
             ->assertJsonPath('message', 'User is not admin');
+    }
+
+    public function test_organization_admin_can_see_staff_salary_in_their_organization(): void
+    {
+        $organization = Organization::factory()->create();
+        $admin = UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'organization_id' => $organization->id,
+            'admin_access_token' => 'admin-token',
+        ]);
+        $user = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'organization_id' => $organization->id,
+        ]);
+
+        StaffDetail::factory()->create([
+            'user_id' => $admin->id,
+            'salary' => 80000,
+        ]);
+        StaffDetail::factory()->create([
+            'user_id' => $user->id,
+            'salary' => 65000,
+        ]);
+
+        $this->getJson('/api/attendance/users/'.$user->id, [
+            'X-Admin-Access-Token' => 'admin-token',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.staff_detail.salary', 65000);
+    }
+
+    public function test_organization_admin_cannot_see_staff_salary_in_another_organization(): void
+    {
+        $adminOrganization = Organization::factory()->create();
+        $otherOrganization = Organization::factory()->create();
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'organization_id' => $adminOrganization->id,
+            'admin_access_token' => 'admin-token',
+        ]);
+        $otherUser = UserModel::factory()->create([
+            'employee_id' => 'EMP002',
+            'organization_id' => $otherOrganization->id,
+        ]);
+
+        StaffDetail::factory()->create([
+            'user_id' => $otherUser->id,
+            'salary' => 65000,
+        ]);
+
+        $this->getJson('/api/attendance/users/'.$otherUser->id, [
+            'X-Admin-Access-Token' => 'admin-token',
+        ])
+            ->assertNotFound()
+            ->assertJsonMissingPath('data.staff_detail.salary');
+    }
+
+    public function test_organization_admin_can_update_staff_details_with_encrypted_salary(): void
+    {
+        $organization = Organization::factory()->create();
+        UserModel::factory()->create([
+            'employee_id' => 'ADMIN001',
+            'is_admin' => true,
+            'organization_id' => $organization->id,
+            'admin_access_token' => 'admin-token',
+        ]);
+        $user = UserModel::factory()->create([
+            'employee_id' => 'EMP001',
+            'organization_id' => $organization->id,
+        ]);
+
+        $this->patchJson('/api/attendance/users/'.$user->id, [
+            'staff_detail' => [
+                'position' => 'Developer',
+                'department' => 'Engineering',
+                'join_date' => '2026-06-01',
+                'salary' => 72000,
+                'salary_currency' => 'USD',
+                'salary_frequency' => 'monthly',
+                'notes' => 'Updated by admin.',
+            ],
+        ], [
+            'X-Admin-Access-Token' => 'admin-token',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.staff_detail.position', 'Developer')
+            ->assertJsonPath('data.staff_detail.salary', 72000);
+
+        $rawSalary = DB::table('staff_details')
+            ->where('user_id', $user->id)
+            ->value('salary');
+
+        $this->assertIsString($rawSalary);
+        $this->assertNotSame('72000', $rawSalary);
+        $this->assertNotSame('72000.00', $rawSalary);
     }
 }

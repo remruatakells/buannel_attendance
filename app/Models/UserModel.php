@@ -6,8 +6,10 @@ use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\StaffDetail;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class UserModel extends Model
 {
@@ -31,11 +33,13 @@ class UserModel extends Model
         'profile_image',
         'organization_id',
         'name',
+        'admin_access_token',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+        'admin_access_token',
     ];
 
     protected function casts(): array
@@ -53,6 +57,11 @@ class UserModel extends Model
     public function attendances(): HasMany
     {
         return $this->hasMany(Attendance::class, 'user_id');
+    }
+
+    public function staffDetail(): HasOne
+    {
+        return $this->hasOne(StaffDetail::class, 'user_id');
     }
 
     public function scopeVisibleTo(Builder $query, ?self $viewer): Builder
