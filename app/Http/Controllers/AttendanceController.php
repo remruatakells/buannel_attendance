@@ -162,33 +162,44 @@ class AttendanceController extends Controller
         }
 
         $month = $payload['month'] ?? Carbon::today()->format('Y-m');
-        $rows = $payload['data']->map(fn ($record) => [
+        $rows = collect([
+            ['Admin Attendance Report'],
+            ['Generated At', Carbon::now()->format('Y-m-d h:i:s A')],
+            ['Month', $this->reportMonthLabel($month)],
+            ['Total Records', $payload['data']->count()],
+            [],
+            [
+                '#',
+                'Employee ID',
+                'Employee Name',
+                'Organization',
+                'Date',
+                'Day',
+                'Status',
+                'Check In',
+                'Check Out',
+                'Late Duration',
+                'Worked Duration',
+                'Salary Cut',
+                'Remark',
+            ],
+        ])->merge($payload['data']->values()->map(fn ($record, int $index) => [
+            $index + 1,
             data_get($record, 'user.employee_id'),
             $this->employeeName(data_get($record, 'user')),
             data_get($record, 'user.organization.name'),
             data_get($record, 'attendance_date'),
-            $this->attendanceStatusValue($record),
+            data_get($record, 'detail.date.day_name'),
+            $this->reportStatus($this->attendanceStatusValue($record)),
             data_get($record, 'check_in'),
             data_get($record, 'check_out'),
             data_get($record, 'late_duration'),
             data_get($record, 'detail.worked_duration'),
             data_get($record, 'salary_cut'),
             data_get($record, 'remark'),
-        ]);
+        ]));
 
-        return $this->csvDownload('admin-attendance-'.$month.'.csv', [
-            'Employee ID',
-            'Employee Name',
-            'Organization',
-            'Date',
-            'Status',
-            'Check In',
-            'Check Out',
-            'Late Duration',
-            'Worked Duration',
-            'Salary Cut',
-            'Remark',
-        ], $rows);
+        return $this->csvDownload('admin-attendance-'.$month.'.csv', $rows);
     }
 
     public function storeAdmin(Request $request)
@@ -281,21 +292,17 @@ class AttendanceController extends Controller
             return $payload['response'];
         }
 
-        $attendanceHeaders = [
-            'Date',
-            'Day',
-            'Status',
-            'Check In',
-            'Check Out',
-            'Late Duration',
-            'Worked Duration',
-            'Salary Cut',
-            'Remark',
-        ];
         $summaryRows = collect([
+            ['Attendance History Report'],
+            ['Generated At', Carbon::now()->format('Y-m-d h:i:s A')],
+            ['Month', $this->reportMonthLabel($payload['month'])],
+            [],
+            ['Employee'],
             ['Employee ID', $payload['employee']['employee_id']],
             ['Employee Name', $this->employeeName($payload['employee'])],
-            ['Month', $payload['month']],
+            ['Organization', data_get($payload, 'employee.organization.name')],
+            [],
+            ['Summary'],
             ['Total Late Duration', $payload['summary']['total_late_duration']],
             ['Total Salary Cut', $payload['summary']['total_salary_cut']],
             ['Payable Salary', $payload['summary']['payable_salary']],
@@ -304,12 +311,24 @@ class AttendanceController extends Controller
             ['Annual Leave Limit', $payload['summary']['annual_leave_limit']],
             ['Annual Leave Remaining', $payload['summary']['annual_leave_remaining'] ?? 'Unlimited'],
             [],
-            $attendanceHeaders,
+            [
+                '#',
+                'Date',
+                'Day',
+                'Status',
+                'Check In',
+                'Check Out',
+                'Late Duration',
+                'Worked Duration',
+                'Salary Cut',
+                'Remark',
+            ],
         ]);
-        $attendanceRows = $payload['data']->map(fn ($record) => [
+        $attendanceRows = $payload['data']->values()->map(fn ($record, int $index) => [
+            $index + 1,
             data_get($record, 'attendance_date'),
             data_get($record, 'detail.date.day_name'),
-            $this->attendanceStatusValue($record),
+            $this->reportStatus($this->attendanceStatusValue($record)),
             data_get($record, 'check_in'),
             data_get($record, 'check_out'),
             data_get($record, 'late_duration'),
@@ -320,7 +339,6 @@ class AttendanceController extends Controller
 
         return $this->csvDownload(
             'attendance-history-'.$payload['employee']['employee_id'].'-'.$payload['month'].'.csv',
-            [],
             $summaryRows->merge($attendanceRows)
         );
     }
@@ -533,14 +551,13 @@ class AttendanceController extends Controller
         ];
     }
 
-    private function csvDownload(string $filename, array $headers, $rows)
+    private function csvDownload(string $filename, $rows)
     {
-        return response()->streamDownload(function () use ($headers, $rows) {
+        return response()->streamDownload(function () use ($rows) {
             $output = fopen('php://output', 'w');
 
-            if ($headers !== []) {
-                fputcsv($output, $headers);
-            }
+            fwrite($output, "\xEF\xBB\xBF");
+            fwrite($output, "sep=,\r\n");
 
             foreach ($rows as $row) {
                 fputcsv($output, $row);
@@ -550,6 +567,16 @@ class AttendanceController extends Controller
         }, $filename, [
             'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
+    }
+
+    private function reportMonthLabel(string $month): string
+    {
+        return Carbon::createFromFormat('Y-m', $month)->format('F Y');
+    }
+
+    private function reportStatus(?string $status): ?string
+    {
+        return $status ? str($status)->replace('_', ' ')->title()->toString() : null;
     }
 
     private function employeeName($user): ?string

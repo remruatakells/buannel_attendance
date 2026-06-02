@@ -474,10 +474,13 @@ class AttendanceApiTest extends TestCase
 
         $content = $response->streamedContent();
 
+        $this->assertStringContainsString('sep=,', $content);
+        $this->assertStringContainsString('"Attendance History Report"', $content);
+        $this->assertStringContainsString('Month,"April 2026"', $content);
         $this->assertStringContainsString('"Employee ID",EMP001', $content);
         $this->assertStringContainsString('"Employee Name","John Doe"', $content);
-        $this->assertStringContainsString('Date,Day,Status,"Check In","Check Out","Late Duration","Worked Duration","Salary Cut",Remark', $content);
-        $this->assertStringContainsString('2026-04-10,Friday,present,"09:00:00 AM","05:30:00 PM"', $content);
+        $this->assertStringContainsString('#,Date,Day,Status,"Check In","Check Out","Late Duration","Worked Duration","Salary Cut",Remark', $content);
+        $this->assertStringContainsString('2026-04-10,Friday,Present,"09:00:00 AM","05:30:00 PM"', $content);
         $this->assertStringContainsString('"On time"', $content);
     }
 
@@ -735,8 +738,11 @@ class AttendanceApiTest extends TestCase
 
         $content = $response->streamedContent();
 
-        $this->assertStringContainsString('"Employee ID","Employee Name",Organization,Date,Status,"Check In","Check Out","Late Duration","Worked Duration","Salary Cut",Remark', $content);
-        $this->assertStringContainsString('EMP001,"John Doe",Buannel,2026-04-10,present,"09:00:00 AM","05:30:00 PM"', $content);
+        $this->assertStringContainsString('sep=,', $content);
+        $this->assertStringContainsString('"Admin Attendance Report"', $content);
+        $this->assertStringContainsString('Month,"April 2026"', $content);
+        $this->assertStringContainsString('#,"Employee ID","Employee Name",Organization,Date,Day,Status,"Check In","Check Out","Late Duration","Worked Duration","Salary Cut",Remark', $content);
+        $this->assertStringContainsString('1,EMP001,"John Doe",Buannel,2026-04-10,Friday,Present,"09:00:00 AM","05:30:00 PM"', $content);
         $this->assertStringContainsString('"On time"', $content);
     }
 
